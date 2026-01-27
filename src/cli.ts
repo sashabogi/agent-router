@@ -14,6 +14,12 @@ import { stringify as stringifyYAML } from "yaml";
 import { DEFAULT_CONFIG, getUserConfigPath } from "./config/defaults.js";
 import { ConfigManager } from "./config/manager.js";
 import { createServer, startServer } from "./server.js";
+import {
+  runSetupWizard,
+  addProvider,
+  testProvider,
+  listProviders,
+} from "./cli/setup-wizard.js";
 
 export const VERSION = "0.1.0";
 
@@ -24,7 +30,20 @@ export const VERSION = "0.1.0";
 /**
  * Supported CLI commands.
  */
-export type Command = "start" | "init" | "list-roles" | "validate" | "version" | "help";
+export type Command =
+  | "setup"
+  | "start"
+  | "init"
+  | "list-roles"
+  | "validate"
+  | "version"
+  | "help"
+  | "provider";
+
+/**
+ * Provider subcommands.
+ */
+export type ProviderSubcommand = "add" | "test" | "list";
 
 /**
  * Parsed CLI options.
@@ -40,6 +59,10 @@ export interface CLIOptions {
   verbose: boolean;
   /** Show help (--help, -h) */
   help: boolean;
+  /** Provider subcommand (for 'provider' command) */
+  providerSubcommand?: ProviderSubcommand;
+  /** Provider name argument (for 'provider add' and 'provider test') */
+  providerName?: string;
 }
 
 // ============================================================================
@@ -53,12 +76,19 @@ Usage:
   agent-router [command] [options]
 
 Commands:
+  setup         Interactive setup wizard (recommended for first run)
   start         Start the MCP server (default)
-  init          Initialize configuration
+  init          Create default config file
   list-roles    List available agent roles
   validate      Validate configuration
+  provider      Manage providers (add, test, list)
   version       Show version
   help          Show this help message
+
+Provider Subcommands:
+  provider add [name]   Add a new provider interactively
+  provider test [name]  Test provider connection(s)
+  provider list         List configured providers
 
 Options:
   --config, -c  Path to config file
@@ -67,11 +97,16 @@ Options:
   --help, -h    Show help
 
 Examples:
+  agent-router setup               # Run interactive setup wizard
   agent-router                     # Start server with default config
-  agent-router start -c config.yaml # Start server with custom config
-  agent-router init                # Create default config file
-  agent-router list-roles          # List configured roles
+  agent-router start -c config.yaml # Start with custom config
+  agent-router provider add openai  # Add OpenAI provider
+  agent-router provider test        # Test all providers
   agent-router validate            # Validate configuration
+
+Getting Started:
+  New users should run 'agent-router setup' to configure providers
+  and API keys interactively.
 
 Configuration:
   Config files are searched in this order (highest priority first):
@@ -167,6 +202,35 @@ export function parseArgs(argv: string[]): CLIOptions {
     const command = (arg ?? "").toLowerCase() as Command;
     if (isValidCommand(command)) {
       options.command = command;
+
+      // Handle provider subcommands
+      if (command === "provider") {
+        const subcommand = argv[i + 1];
+        if (subcommand && !subcommand.startsWith("-")) {
+          if (isValidProviderSubcommand(subcommand)) {
+            options.providerSubcommand = subcommand;
+            i++;
+
+            // Check for optional provider name argument (for 'add' and 'test')
+            if (subcommand === "add" || subcommand === "test") {
+              const providerName = argv[i + 1];
+              if (providerName && !providerName.startsWith("-")) {
+                options.providerName = providerName;
+                i++;
+              }
+            }
+          } else {
+            console.error(`Error: Unknown provider subcommand: ${subcommand}`);
+            console.error("Available subcommands: add, test, list");
+            process.exit(1);
+          }
+        } else {
+          // No subcommand provided, show provider help
+          console.error("Error: provider command requires a subcommand");
+          console.error("Usage: agent-router provider <add|test|list> [name]");
+          process.exit(1);
+        }
+      }
     } else {
       console.error(`Error: Unknown command: ${arg}`);
       console.error('Run "agent-router --help" for usage information.');
@@ -188,7 +252,14 @@ export function parseArgs(argv: string[]): CLIOptions {
  * Check if a string is a valid command.
  */
 function isValidCommand(cmd: string): cmd is Command {
-  return ["start", "init", "list-roles", "validate", "version", "help"].includes(cmd);
+  return ["setup", "start", "init", "list-roles", "validate", "version", "help", "provider"].includes(cmd);
+}
+
+/**
+ * Check if a string is a valid provider subcommand.
+ */
+function isValidProviderSubcommand(cmd: string): cmd is ProviderSubcommand {
+  return ["add", "test", "list"].includes(cmd);
 }
 
 // ============================================================================
@@ -196,9 +267,48 @@ function isValidCommand(cmd: string): cmd is Command {
 // ============================================================================
 
 /**
+ * Run the setup wizard.
+ */
+async function cmdSetup(_options: CLIOptions): Promise<void> {
+  await runSetupWizard();
+}
+
+/**
+ * Handle provider subcommands.
+ */
+async function cmdProvider(options: CLIOptions): Promise<void> {
+  switch (options.providerSubcommand) {
+    case "add":
+      await addProvider(options.providerName);
+      break;
+    case "test":
+      await testProvider(options.providerName);
+      break;
+    case "list":
+      await listProviders();
+      break;
+    default:
+      console.error("Error: provider command requires a subcommand");
+      console.error("Usage: agent-router provider <add|test|list> [name]");
+      process.exit(1);
+  }
+}
+
+/**
  * Start the MCP server.
  */
 async function cmdStart(options: CLIOptions): Promise<void> {
+  // Check if config exists, suggest setup if not
+  const configPath = options.configPath || getUserConfigPath();
+  if (!existsSync(configPath) && !options.configPath) {
+    console.error("[AgentRouter] No configuration file found.");
+    console.error("");
+    console.error("  Run 'agent-router setup' to configure AgentRouter interactively.");
+    console.error("  Or run 'agent-router init' to create a default config file.");
+    console.error("");
+    process.exit(1);
+  }
+
   if (options.verbose) {
     console.error("[AgentRouter] Starting MCP server...");
     if (options.configPath) {
@@ -406,6 +516,8 @@ async function cmdValidate(options: CLIOptions): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Configuration validation failed: ${message}`);
+    console.error("");
+    console.error("Tip: Run 'agent-router setup' to configure AgentRouter interactively.");
     process.exit(1);
   }
 }
@@ -435,6 +547,9 @@ function cmdHelp(): void {
  */
 export async function runCLI(options: CLIOptions): Promise<void> {
   switch (options.command) {
+    case "setup":
+      await cmdSetup(options);
+      break;
     case "start":
       await cmdStart(options);
       break;
@@ -446,6 +561,9 @@ export async function runCLI(options: CLIOptions): Promise<void> {
       break;
     case "validate":
       await cmdValidate(options);
+      break;
+    case "provider":
+      await cmdProvider(options);
       break;
     case "version":
       cmdVersion();

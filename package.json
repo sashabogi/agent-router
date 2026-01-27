@@ -37,8 +37,10 @@
   "author": "Hive Development Team",
   "license": "MIT",
   "dependencies": {
+    "@clack/prompts": "^0.11.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "ajv": "^8.17.1",
+    "picocolors": "^1.1.1",
     "pino": "^9.6.0",
     "yaml": "^2.7.0",
     "zod": "^3.24.1"
