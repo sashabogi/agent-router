@@ -1,0 +1,138 @@
+# AgentRouter Default Configuration
+# =================================
+# This file defines the default agent roles, providers, and settings.
+# Users can override these settings in ~/.config/agent-router/config.yaml
+#
+# Environment variables are interpolated using ${VAR_NAME} syntax.
+# Example: api_key: ${ANTHROPIC_API_KEY}
+
+version: "1.0"
+
+# -----------------------------------------------------------------------------
+# Default Settings
+# -----------------------------------------------------------------------------
+# These defaults apply to all roles unless overridden at the role level.
+defaults:
+  temperature: 0.7
+  max_tokens: 4096
+  timeout_ms: 60000
+
+# -----------------------------------------------------------------------------
+# Agent Roles
+# -----------------------------------------------------------------------------
+# Each role maps to a specific provider/model combination with a tailored
+# system prompt. Roles can be invoked via MCP tools like invoke_agent.
+roles:
+  # ---------------------------------------------------------------------------
+  # Coder: Expert software engineer for code generation and implementation
+  # ---------------------------------------------------------------------------
+  coder:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    system_prompt: |
+      You are an expert software engineer. Write clean, efficient,
+      well-documented code. Follow best practices and design patterns.
+
+      When implementing solutions:
+      - Consider edge cases and error handling
+      - Write readable, maintainable code
+      - Include helpful comments where appropriate
+      - Follow the language's idiomatic style
+      - Consider performance implications
+    # Fallback to OpenAI if Anthropic is unavailable
+    fallback:
+      provider: openai
+      model: gpt-4o
+
+  # ---------------------------------------------------------------------------
+  # Critic: Skeptical senior architect for plan review and risk identification
+  # ---------------------------------------------------------------------------
+  critic:
+    provider: openai
+    model: gpt-4o
+    temperature: 0.3  # Lower temperature for more focused critique
+    system_prompt: |
+      You are a skeptical senior architect. Your job is to:
+      - Question assumptions and identify risks
+      - Challenge decisions that seem "good enough"
+      - Find edge cases and failure modes
+      - Provide constructive but rigorous feedback
+
+      Never accept plans at face value. Push for excellence.
+      Be specific about concerns and provide actionable suggestions.
+
+  # ---------------------------------------------------------------------------
+  # Designer: Senior UI/UX designer for visual and interaction feedback
+  # ---------------------------------------------------------------------------
+  designer:
+    provider: google
+    model: gemini-2.5-pro
+    system_prompt: |
+      You are a senior UI/UX designer and frontend architect.
+      Focus on: accessibility, visual hierarchy, user experience,
+      component reusability, and modern design patterns.
+
+      When providing feedback:
+      - Consider WCAG accessibility guidelines
+      - Evaluate visual consistency and design systems
+      - Assess user flow and interaction patterns
+      - Recommend improvements with specific examples
+      - Consider responsive design and mobile experience
+
+  # ---------------------------------------------------------------------------
+  # Researcher: Research analyst for fact-finding and information gathering
+  # ---------------------------------------------------------------------------
+  researcher:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    system_prompt: |
+      You are a research analyst. Provide well-sourced,
+      factual information with citations where possible.
+
+      When researching topics:
+      - Distinguish between facts and opinions
+      - Note confidence levels in your findings
+      - Highlight areas of uncertainty or debate
+      - Provide multiple perspectives when relevant
+      - Cite sources and explain your methodology
+
+  # ---------------------------------------------------------------------------
+  # Reviewer: Code reviewer for best practices and security analysis
+  # ---------------------------------------------------------------------------
+  reviewer:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    system_prompt: |
+      You are an experienced code reviewer focused on quality and security.
+
+      When reviewing code:
+      - Check for security vulnerabilities (injection, XSS, etc.)
+      - Evaluate error handling and edge cases
+      - Assess code readability and maintainability
+      - Verify adherence to best practices and patterns
+      - Look for performance issues and optimization opportunities
+      - Ensure proper testing coverage is considered
+
+      Provide specific, actionable feedback with line references.
+
+# -----------------------------------------------------------------------------
+# Provider Configuration
+# -----------------------------------------------------------------------------
+# API credentials and endpoints for each LLM provider.
+# Use environment variable interpolation for sensitive values.
+providers:
+  anthropic:
+    api_key: ${ANTHROPIC_API_KEY}
+    # base_url: https://api.anthropic.com  # Optional: uncomment to override
+
+  openai:
+    api_key: ${OPENAI_API_KEY}
+    # base_url: https://api.openai.com/v1  # Optional: uncomment to override
+
+  google:
+    api_key: ${GEMINI_API_KEY}
+    # base_url: https://generativelanguage.googleapis.com  # Optional: uncomment to override
+
+  ollama:
+    base_url: http://localhost:11434
+    # No API key required for local Ollama instance

@@ -1,0 +1,226 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://agent-router.dev/config/schema.json",
+  "title": "AgentRouter Configuration",
+  "description": "Configuration schema for AgentRouter MCP server. Defines roles, providers, and default settings for multi-agent orchestration.",
+  "type": "object",
+  "required": ["version", "roles", "providers"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Configuration schema version. Must be '1.0' for this version of AgentRouter.",
+      "pattern": "^1\\.0$",
+      "default": "1.0",
+      "examples": ["1.0"]
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Default values applied to all roles unless overridden. These settings provide sensible defaults for LLM requests.",
+      "additionalProperties": false,
+      "properties": {
+        "temperature": {
+          "type": "number",
+          "description": "Default temperature for LLM requests. Controls randomness in responses. Lower values (0-0.3) produce more focused/deterministic output, higher values (0.7-2.0) produce more creative/varied output.",
+          "minimum": 0,
+          "maximum": 2,
+          "default": 0.7,
+          "examples": [0.3, 0.7, 1.0]
+        },
+        "max_tokens": {
+          "type": "integer",
+          "description": "Default maximum tokens for LLM responses. Limits the length of generated responses. Most models support up to 4096-8192 tokens, some support up to 200000.",
+          "minimum": 1,
+          "maximum": 200000,
+          "default": 4096,
+          "examples": [1024, 4096, 8192, 16384]
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Default timeout in milliseconds for LLM requests. Prevents requests from hanging indefinitely. Longer timeouts may be needed for complex tasks or slow models.",
+          "minimum": 1000,
+          "maximum": 600000,
+          "default": 60000,
+          "examples": [30000, 60000, 120000]
+        }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "description": "Role definitions mapping role names to their configurations. Each role represents a specialized AI agent with specific capabilities and personality.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/definitions/RoleConfig"
+      },
+      "examples": [
+        {
+          "coder": {
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-20250514",
+            "system_prompt": "You are an expert software engineer."
+          },
+          "critic": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "temperature": 0.3
+          }
+        }
+      ]
+    },
+    "providers": {
+      "type": "object",
+      "description": "Provider configurations mapping provider names to their connection settings. Each provider represents an LLM API endpoint (Anthropic, OpenAI, Google, Ollama, etc.).",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/definitions/ProviderConfig"
+      },
+      "examples": [
+        {
+          "anthropic": {
+            "api_key": "${ANTHROPIC_API_KEY}"
+          },
+          "openai": {
+            "api_key": "${OPENAI_API_KEY}",
+            "organization": "org-xxxxx"
+          },
+          "ollama": {
+            "base_url": "http://localhost:11434"
+          }
+        }
+      ]
+    }
+  },
+  "definitions": {
+    "RoleConfig": {
+      "type": "object",
+      "description": "Configuration for a specific agent role. Defines which provider and model to use, along with optional behavior overrides.",
+      "required": ["provider", "model"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "Provider name. Must match a key in the providers configuration section.",
+          "minLength": 1,
+          "examples": ["anthropic", "openai", "google", "ollama", "openrouter", "zai"]
+        },
+        "model": {
+          "type": "string",
+          "description": "Model identifier to use with the provider. The exact format depends on the provider (e.g., 'claude-sonnet-4-20250514' for Anthropic, 'gpt-4o' for OpenAI, 'gemini-2.5-pro' for Google).",
+          "minLength": 1,
+          "examples": [
+            "claude-sonnet-4-20250514",
+            "claude-opus-4-20250514",
+            "gpt-4o",
+            "gpt-4-turbo",
+            "gemini-2.5-pro",
+            "llama3.2:latest"
+          ]
+        },
+        "system_prompt": {
+          "type": "string",
+          "description": "System prompt / persona for this role. Defines the agent's behavior, expertise, and response style. Supports multi-line strings in YAML.",
+          "examples": [
+            "You are an expert software engineer. Write clean, efficient, well-documented code.",
+            "You are a skeptical senior architect. Challenge assumptions and identify risks."
+          ]
+        },
+        "temperature": {
+          "type": "number",
+          "description": "Temperature override for this role. Overrides the default temperature setting. Use lower values for more deterministic tasks (code review, fact-checking) and higher values for creative tasks.",
+          "minimum": 0,
+          "maximum": 2,
+          "examples": [0.2, 0.3, 0.7, 1.0]
+        },
+        "max_tokens": {
+          "type": "integer",
+          "description": "Maximum tokens override for this role. Overrides the default max_tokens setting. Increase for roles that need longer responses.",
+          "minimum": 1,
+          "maximum": 200000,
+          "examples": [2048, 4096, 8192, 16384]
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Timeout override in milliseconds for this role. Overrides the default timeout_ms setting. Increase for roles that may need more processing time.",
+          "minimum": 1000,
+          "maximum": 600000,
+          "examples": [30000, 60000, 120000]
+        },
+        "fallback": {
+          "$ref": "#/definitions/FallbackConfig",
+          "description": "Fallback configuration if the primary provider fails. Provides resilience by automatically switching to an alternative provider/model on failure."
+        }
+      }
+    },
+    "FallbackConfig": {
+      "type": "object",
+      "description": "Fallback provider configuration. Used when the primary provider fails or is unavailable (e.g., rate limits, outages, errors).",
+      "required": ["provider", "model"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "Fallback provider name. Must match a key in the providers configuration section.",
+          "minLength": 1,
+          "examples": ["anthropic", "openai", "google", "ollama"]
+        },
+        "model": {
+          "type": "string",
+          "description": "Fallback model identifier. Should be a reliable model that can handle the same tasks as the primary.",
+          "minLength": 1,
+          "examples": ["claude-sonnet-4-20250514", "gpt-4o", "gemini-2.5-pro"]
+        }
+      }
+    },
+    "ProviderConfig": {
+      "type": "object",
+      "description": "Provider-specific configuration. Contains credentials and settings for connecting to an LLM provider API.",
+      "additionalProperties": false,
+      "properties": {
+        "api_key": {
+          "type": "string",
+          "description": "API key for authentication. Supports environment variable interpolation using ${ENV_VAR} syntax. It is strongly recommended to use environment variables rather than hardcoding keys.",
+          "examples": ["${ANTHROPIC_API_KEY}", "${OPENAI_API_KEY}", "${GEMINI_API_KEY}"]
+        },
+        "base_url": {
+          "type": "string",
+          "description": "Base URL for the provider API. Use for self-hosted instances, proxies, or alternative endpoints. Must be a valid URL.",
+          "format": "uri",
+          "examples": [
+            "https://api.anthropic.com",
+            "https://api.openai.com/v1",
+            "http://localhost:11434",
+            "https://api.z.ai/api/anthropic"
+          ]
+        },
+        "organization": {
+          "type": "string",
+          "description": "Organization ID for providers that support it (e.g., OpenAI). Used for billing and access control.",
+          "examples": ["org-xxxxxxxxxxxxx"]
+        },
+        "project": {
+          "type": "string",
+          "description": "Project ID for providers that require it (e.g., Google Cloud / Vertex AI). Used for resource organization and billing.",
+          "examples": ["my-gcp-project"]
+        },
+        "location": {
+          "type": "string",
+          "description": "Region/location for providers that require it (e.g., Google Cloud / Vertex AI). Affects latency and data residency.",
+          "examples": ["us-central1", "europe-west1", "asia-east1"]
+        },
+        "headers": {
+          "type": "object",
+          "description": "Additional headers to include in API requests. Useful for custom authentication, tracing, or proxy requirements.",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "examples": [
+            {
+              "X-Custom-Header": "value",
+              "X-Trace-Id": "${TRACE_ID}"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
