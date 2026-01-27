@@ -1,8 +1,6 @@
 /**
- * Interactive Setup Wizard for AgentRouter
- *
- * Provides a beautiful CLI experience for configuring providers, roles,
- * and default settings for multi-agent orchestration.
+ * Interactive setup wizard for AgentRouter
+ * Provides a beautiful CLI experience for configuring providers and roles
  */
 
 import * as p from "@clack/prompts";
@@ -10,46 +8,40 @@ import color from "picocolors";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import yaml from "yaml";
+import { stringify as yamlStringify } from "yaml";
 
-import type { Config, RoleConfig, ProviderConfig } from "../types.js";
-import { getUserConfigDir, getUserConfigPath } from "../config/defaults.js";
+import type { Config, ProviderConfig, RoleConfig } from "../types.js";
+import { getUserConfigPath, getUserConfigDir } from "../config/defaults.js";
+import {
+  testAnthropicConnection,
+  testOpenAIConnection,
+  testGeminiConnection,
+  testOllamaConnection,
+  testConnectionWithSpinner,
+  type ConnectionTestResult,
+} from "./test-connection.js";
 
 // ============================================================================
 // Constants
 // ============================================================================
 
 /**
- * Environment variable names for each provider type.
+ * Environment variable names for each provider
  */
 const PROVIDER_ENV_VARS: Record<string, string> = {
   anthropic: "ANTHROPIC_API_KEY",
   openai: "OPENAI_API_KEY",
   google: "GEMINI_API_KEY",
-  ollama: "", // No API key required
+  ollama: "", // No API key needed
 };
 
 /**
- * API key documentation URLs for each provider.
- */
-const PROVIDER_DOCS: Record<string, string> = {
-  anthropic: "https://console.anthropic.com/settings/keys",
-  openai: "https://platform.openai.com/api-keys",
-  google: "https://aistudio.google.com/apikey",
-  ollama: "https://ollama.ai/download",
-};
-
-/**
- * Track which environment variables were configured during setup.
+ * Track which environment variables were configured during setup
  */
 const configuredEnvVars: Map<string, string> = new Map();
 
-// ============================================================================
-// Types
-// ============================================================================
-
 /**
- * Provider option for selection.
+ * Available provider options
  */
 interface ProviderOption {
   value: string;
@@ -57,43 +49,16 @@ interface ProviderOption {
   hint?: string;
 }
 
-/**
- * Model option for selection.
- */
-interface ModelOption {
-  value: string;
-  label: string;
-  hint?: string;
-}
-
-/**
- * Agent role definition with recommendations.
- */
-interface AgentRoleDefinition {
-  value: string;
-  label: string;
-  hint: string;
-  recommendedProvider: string;
-  recommendedModel: string;
-}
-
-// ============================================================================
-// Data Definitions
-// ============================================================================
-
-/**
- * Available providers for configuration.
- */
 const AVAILABLE_PROVIDERS: ProviderOption[] = [
   {
     value: "anthropic",
     label: "Anthropic",
-    hint: "Claude models - best for coding",
+    hint: "Claude models - excellent for coding",
   },
   {
     value: "openai",
     label: "OpenAI",
-    hint: "GPT-4o and o1 reasoning models",
+    hint: "GPT-4o, o1 reasoning models",
   },
   {
     value: "google",
@@ -108,84 +73,58 @@ const AVAILABLE_PROVIDERS: ProviderOption[] = [
 ];
 
 /**
- * Available models per provider.
+ * Model options per provider
  */
-const PROVIDER_MODELS: Record<string, ModelOption[]> = {
-  anthropic: [
-    { value: "claude-opus-4-5-20251101", label: "Claude Opus 4.5", hint: "Most capable" },
-    { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4", hint: "Fast and smart" },
-    { value: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku", hint: "Fastest, cheapest" },
-  ],
-  openai: [
-    { value: "gpt-4o", label: "GPT-4o", hint: "Flagship model" },
-    { value: "gpt-4o-mini", label: "GPT-4o Mini", hint: "Fast and affordable" },
-    { value: "o1", label: "o1", hint: "Advanced reasoning" },
-    { value: "o1-mini", label: "o1 Mini", hint: "Efficient reasoning" },
-  ],
-  google: [
-    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro", hint: "Best quality" },
-    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash", hint: "Faster, multimodal" },
-    { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro", hint: "Long context" },
-    { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash", hint: "Fast and cheap" },
-  ],
-  ollama: [
-    { value: "llama3.2", label: "Llama 3.2", hint: "Meta's latest" },
-    { value: "qwen3:32b", label: "Qwen 3 32B", hint: "Strong reasoning" },
-    { value: "codellama", label: "Code Llama", hint: "Optimized for code" },
-    { value: "mistral", label: "Mistral", hint: "Fast and capable" },
-  ],
-};
+const ANTHROPIC_MODELS = [
+  { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4", hint: "Fast and capable" },
+  { value: "claude-opus-4-5-20251101", label: "Claude Opus 4.5", hint: "Most capable" },
+];
+
+const OPENAI_MODELS = [
+  { value: "gpt-4o", label: "GPT-4o", hint: "Versatile flagship model" },
+  { value: "gpt-4o-mini", label: "GPT-4o Mini", hint: "Faster, cheaper" },
+  { value: "o1", label: "o1", hint: "Advanced reasoning" },
+  { value: "o1-mini", label: "o1 Mini", hint: "Faster reasoning" },
+];
+
+const GEMINI_MODELS = [
+  { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro", hint: "Most capable" },
+  { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash", hint: "Faster" },
+  { value: "gemini-2.0-flash-exp", label: "Gemini 2.0 Flash Exp", hint: "Experimental" },
+];
 
 /**
- * Default agent roles with recommendations.
+ * AgentRouter role definitions
  */
-const AGENT_ROLES: AgentRoleDefinition[] = [
+interface RoleDefinition {
+  value: string;
+  label: string;
+  hint: string;
+  defaultProvider: string;
+  defaultModel: string;
+  systemPrompt: string;
+  temperature?: number;
+}
+
+const AGENT_ROLES: RoleDefinition[] = [
   {
     value: "coder",
     label: "Coder",
     hint: "Code generation and implementation",
-    recommendedProvider: "anthropic",
-    recommendedModel: "claude-sonnet-4-20250514",
+    defaultProvider: "anthropic",
+    defaultModel: "claude-sonnet-4-20250514",
+    systemPrompt: `You are an expert software engineer. Write clean, efficient, well-documented code.
+Follow best practices, use appropriate design patterns, and consider edge cases.
+Provide explanations for complex logic.`,
   },
   {
     value: "critic",
     label: "Critic",
-    hint: "Plan review and risk identification",
-    recommendedProvider: "openai",
-    recommendedModel: "gpt-4o",
-  },
-  {
-    value: "designer",
-    label: "Designer",
-    hint: "UI/UX feedback and visual design",
-    recommendedProvider: "google",
-    recommendedModel: "gemini-2.5-pro",
-  },
-  {
-    value: "researcher",
-    label: "Researcher",
-    hint: "Fact-finding and information gathering",
-    recommendedProvider: "google",
-    recommendedModel: "gemini-2.5-pro",
-  },
-  {
-    value: "reviewer",
-    label: "Reviewer",
-    hint: "Code review and security analysis",
-    recommendedProvider: "openai",
-    recommendedModel: "gpt-4o",
-  },
-];
-
-/**
- * Default system prompts for each role.
- */
-const DEFAULT_SYSTEM_PROMPTS: Record<string, string> = {
-  coder: `You are an expert software engineer. Write clean, efficient, well-documented code.
-Follow best practices, use appropriate design patterns, and consider edge cases.
-Provide explanations for complex logic.`,
-
-  critic: `You are a skeptical senior architect and technical reviewer. Your job is to:
+    hint: "Plan review, challenge assumptions",
+    defaultProvider: "openai",
+    defaultModel: "gpt-4o",
+    temperature: 0.3,
+    systemPrompt: `You are a skeptical senior architect and technical reviewer. Your job is to:
 
 1. **Challenge Assumptions**: Don't accept claims at face value. Ask "Why?" and "What if?"
 2. **Identify Risks**: Find failure modes, edge cases, and potential issues
@@ -195,8 +134,14 @@ Provide explanations for complex logic.`,
 
 Be constructive but rigorous. Your goal is to make plans better, not to tear them down.
 Provide specific, actionable feedback.`,
-
-  designer: `You are a senior UI/UX designer and frontend architect. Focus on:
+  },
+  {
+    value: "designer",
+    label: "Designer",
+    hint: "UI/UX feedback and design review",
+    defaultProvider: "google",
+    defaultModel: "gemini-2.5-pro",
+    systemPrompt: `You are a senior UI/UX designer and frontend architect. Focus on:
 
 1. **User Experience**: Is it intuitive? Accessible? Delightful?
 2. **Visual Hierarchy**: Does the layout guide the user's eye?
@@ -206,12 +151,25 @@ Provide specific, actionable feedback.`,
 6. **Accessibility**: WCAG compliance, keyboard navigation, screen readers
 
 Provide specific feedback with examples and alternatives where applicable.`,
-
-  researcher: `You are a research analyst. Provide well-researched, factual information.
+  },
+  {
+    value: "researcher",
+    label: "Researcher",
+    hint: "Fact-finding and research",
+    defaultProvider: "google",
+    defaultModel: "gemini-2.5-pro",
+    systemPrompt: `You are a research analyst. Provide well-researched, factual information.
 When possible, cite sources or indicate confidence levels.
 If you're uncertain, say so. Prefer accuracy over completeness.`,
-
-  reviewer: `You are a senior code reviewer. Review code for:
+  },
+  {
+    value: "reviewer",
+    label: "Reviewer",
+    hint: "Code review and quality assurance",
+    defaultProvider: "openai",
+    defaultModel: "gpt-4o",
+    temperature: 0.2,
+    systemPrompt: `You are a senior code reviewer. Review code for:
 
 1. **Correctness**: Does it work? Are there bugs?
 2. **Security**: SQL injection, XSS, auth issues, data exposure
@@ -221,40 +179,45 @@ If you're uncertain, say so. Prefer accuracy over completeness.`,
 6. **Testing**: Is it testable? Are there missing tests?
 
 Be specific. Reference line numbers. Suggest improvements with code examples.`,
-};
+  },
+];
 
 // ============================================================================
-// UI Components
+// Display Functions
 // ============================================================================
 
 /**
- * Display the wizard intro banner.
+ * Display the wizard intro banner
  */
 function displayBanner(): void {
   console.log();
-  console.log(color.cyan("╭─────────────────────────────────────────────────╮"));
-  console.log(color.cyan("│                                                 │"));
+  console.log(color.cyan("+-------------------------------------------------+"));
+  console.log(color.cyan("|                                                 |"));
   console.log(
-    color.cyan("│   ") +
-      color.bold(color.yellow("🔀")) +
+    color.cyan("|   ") +
+      color.bold(color.yellow("@")) +
       color.bold(" AgentRouter Setup") +
-      color.cyan("                         │")
+      color.cyan("                         |")
   );
-  console.log(color.cyan("│                                                 │"));
+  console.log(color.cyan("|                                                 |"));
   console.log(
-    color.cyan("│   ") +
-      color.dim("Multi-agent LLM orchestration for Claude Code") +
-      color.cyan("  │")
+    color.cyan("|   ") +
+      color.dim("Multi-agent orchestration for Claude Code") +
+      color.cyan("     |")
   );
-  console.log(color.cyan("│                                                 │"));
-  console.log(color.cyan("╰─────────────────────────────────────────────────╯"));
+  console.log(color.cyan("|                                                 |"));
+  console.log(color.cyan("+-------------------------------------------------+"));
   console.log();
 }
 
+// ============================================================================
+// Validation Functions
+// ============================================================================
+
 /**
- * Validate API key format.
+ * Validate API key format
  */
-function validateApiKey(value: string, provider: string): string | undefined {
+function validateApiKey(value: string, _provider: string): string | undefined {
   if (!value || value.trim().length === 0) {
     return "API key is required";
   }
@@ -264,182 +227,26 @@ function validateApiKey(value: string, provider: string): string | undefined {
     return "API key seems too short";
   }
 
-  // Provider-specific validation
-  if (provider === "anthropic" && !value.startsWith("sk-ant-")) {
-    return "Anthropic API keys typically start with 'sk-ant-'";
-  }
-
-  if (provider === "openai" && !value.startsWith("sk-")) {
-    return "OpenAI API keys typically start with 'sk-'";
-  }
-
   return undefined;
 }
 
 // ============================================================================
-// Connection Testing
+// Provider Configuration Functions
 // ============================================================================
 
 /**
- * Test Anthropic API connection.
- */
-async function testAnthropicConnection(apiKey: string): Promise<{ success: boolean; error?: string }> {
-  try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-3-5-haiku-20241022",
-        max_tokens: 1,
-        messages: [{ role: "user", content: "hi" }],
-      }),
-    });
-
-    if (response.ok) {
-      return { success: true };
-    }
-
-    const data = (await response.json()) as { error?: { message?: string } };
-    return {
-      success: false,
-      error: data.error?.message ?? `HTTP ${response.status}`,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Connection failed",
-    };
-  }
-}
-
-/**
- * Test OpenAI API connection.
- */
-async function testOpenAIConnection(apiKey: string): Promise<{ success: boolean; error?: string }> {
-  try {
-    const response = await fetch("https://api.openai.com/v1/models", {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
-    });
-
-    if (response.ok) {
-      return { success: true };
-    }
-
-    const data = (await response.json()) as { error?: { message?: string } };
-    return {
-      success: false,
-      error: data.error?.message ?? `HTTP ${response.status}`,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Connection failed",
-    };
-  }
-}
-
-/**
- * Test Gemini API connection.
- */
-async function testGeminiConnection(apiKey: string): Promise<{ success: boolean; error?: string }> {
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`,
-      { method: "GET" }
-    );
-
-    if (response.ok) {
-      return { success: true };
-    }
-
-    const data = (await response.json()) as { error?: { message?: string } };
-    return {
-      success: false,
-      error: data.error?.message ?? `HTTP ${response.status}`,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Connection failed",
-    };
-  }
-}
-
-/**
- * Test Ollama connection.
- */
-async function testOllamaConnection(
-  baseUrl: string
-): Promise<{ success: boolean; error?: string; models?: string[] }> {
-  try {
-    const response = await fetch(`${baseUrl}/api/tags`, { method: "GET" });
-
-    if (response.ok) {
-      const data = (await response.json()) as { models?: { name: string }[] };
-      const models = data.models?.map((m) => m.name) ?? [];
-      return { success: true, models };
-    }
-
-    return {
-      success: false,
-      error: `HTTP ${response.status}`,
-    };
-  } catch {
-    return {
-      success: false,
-      error: "Ollama server not running. Start with: ollama serve",
-    };
-  }
-}
-
-/**
- * Test connection with a spinner.
- */
-async function testConnectionWithSpinner<T>(
-  providerName: string,
-  testFn: () => Promise<T>
-): Promise<T> {
-  const spinner = p.spinner();
-  spinner.start(`Testing ${providerName} connection...`);
-
-  try {
-    const result = await testFn();
-    const resultObj = result as { success: boolean };
-    if (resultObj.success) {
-      spinner.stop(`${providerName} connection successful`);
-    } else {
-      spinner.stop(`${providerName} connection failed`);
-    }
-    return result;
-  } catch (error) {
-    spinner.stop(`${providerName} connection failed`);
-    throw error;
-  }
-}
-
-// ============================================================================
-// Provider Configuration
-// ============================================================================
-
-/**
- * Configure Anthropic provider.
+ * Configure Anthropic provider
  */
 async function configureAnthropic(): Promise<ProviderConfig | null> {
   p.log.step(color.bold("Anthropic Configuration"));
 
   p.note(
-    "Get your API key from the Anthropic Console:\n" +
-      color.cyan(PROVIDER_DOCS["anthropic"] ?? ""),
+    "Get your API key from the Anthropic console:\n" +
+      color.cyan("https://console.anthropic.com/settings/keys"),
     "Anthropic Setup"
   );
 
+  // Loop to allow retrying API key entry
   while (true) {
     const apiKey = await p.password({
       message: "Enter your Anthropic API key:",
@@ -448,12 +255,22 @@ async function configureAnthropic(): Promise<ProviderConfig | null> {
 
     if (p.isCancel(apiKey)) return null;
 
+    // Test connection
     const result = await testConnectionWithSpinner("Anthropic", () =>
       testAnthropicConnection(apiKey)
     );
 
     if (result.success) {
-      const envVarName = PROVIDER_ENV_VARS["anthropic"] ?? "ANTHROPIC_API_KEY";
+      // Select default model
+      const defaultModel = await p.select({
+        message: "Select default Claude model:",
+        options: ANTHROPIC_MODELS,
+      });
+
+      if (p.isCancel(defaultModel)) return null;
+
+      // Store env var reference instead of actual key
+      const envVarName = PROVIDER_ENV_VARS["anthropic"]!;
       configuredEnvVars.set(envVarName, apiKey);
 
       p.log.info(
@@ -466,8 +283,9 @@ async function configureAnthropic(): Promise<ProviderConfig | null> {
       };
     }
 
+    // Test failed - ask what to do
     const action = await p.select({
-      message: `Connection failed: ${result.error}. What would you like to do?`,
+      message: "Connection test failed. What would you like to do?",
       options: [
         { value: "retry", label: "Re-enter API key", hint: "Try a different key" },
         { value: "skip", label: "Skip this provider" },
@@ -478,7 +296,7 @@ async function configureAnthropic(): Promise<ProviderConfig | null> {
     if (p.isCancel(action) || action === "skip") return null;
 
     if (action === "add") {
-      const envVarName = PROVIDER_ENV_VARS["anthropic"] ?? "ANTHROPIC_API_KEY";
+      const envVarName = PROVIDER_ENV_VARS["anthropic"]!;
       configuredEnvVars.set(envVarName, apiKey);
 
       return {
@@ -486,20 +304,23 @@ async function configureAnthropic(): Promise<ProviderConfig | null> {
         base_url: "https://api.anthropic.com",
       };
     }
+    // action === "retry" - loop continues
   }
 }
 
 /**
- * Configure OpenAI provider.
+ * Configure OpenAI provider
  */
 async function configureOpenAI(): Promise<ProviderConfig | null> {
   p.log.step(color.bold("OpenAI Configuration"));
 
   p.note(
-    "Get your API key from the OpenAI Dashboard:\n" + color.cyan(PROVIDER_DOCS["openai"] ?? ""),
+    "Get your API key from the OpenAI dashboard:\n" +
+      color.cyan("https://platform.openai.com/api-keys"),
     "OpenAI Setup"
   );
 
+  // Loop to allow retrying API key entry
   while (true) {
     const apiKey = await p.password({
       message: "Enter your OpenAI API key:",
@@ -508,12 +329,22 @@ async function configureOpenAI(): Promise<ProviderConfig | null> {
 
     if (p.isCancel(apiKey)) return null;
 
+    // Test connection
     const result = await testConnectionWithSpinner("OpenAI", () =>
       testOpenAIConnection(apiKey)
     );
 
     if (result.success) {
-      const envVarName = PROVIDER_ENV_VARS["openai"] ?? "OPENAI_API_KEY";
+      // Select default model
+      const defaultModel = await p.select({
+        message: "Select default OpenAI model:",
+        options: OPENAI_MODELS,
+      });
+
+      if (p.isCancel(defaultModel)) return null;
+
+      // Store env var reference instead of actual key
+      const envVarName = PROVIDER_ENV_VARS["openai"]!;
       configuredEnvVars.set(envVarName, apiKey);
 
       p.log.info(
@@ -526,8 +357,9 @@ async function configureOpenAI(): Promise<ProviderConfig | null> {
       };
     }
 
+    // Test failed - ask what to do
     const action = await p.select({
-      message: `Connection failed: ${result.error}. What would you like to do?`,
+      message: "Connection test failed. What would you like to do?",
       options: [
         { value: "retry", label: "Re-enter API key", hint: "Try a different key" },
         { value: "skip", label: "Skip this provider" },
@@ -538,7 +370,7 @@ async function configureOpenAI(): Promise<ProviderConfig | null> {
     if (p.isCancel(action) || action === "skip") return null;
 
     if (action === "add") {
-      const envVarName = PROVIDER_ENV_VARS["openai"] ?? "OPENAI_API_KEY";
+      const envVarName = PROVIDER_ENV_VARS["openai"]!;
       configuredEnvVars.set(envVarName, apiKey);
 
       return {
@@ -546,20 +378,23 @@ async function configureOpenAI(): Promise<ProviderConfig | null> {
         base_url: "https://api.openai.com/v1",
       };
     }
+    // action === "retry" - loop continues
   }
 }
 
 /**
- * Configure Google Gemini provider.
+ * Configure Google Gemini provider
  */
 async function configureGemini(): Promise<ProviderConfig | null> {
   p.log.step(color.bold("Google Gemini Configuration"));
 
   p.note(
-    "Get your API key from Google AI Studio:\n" + color.cyan(PROVIDER_DOCS["google"] ?? ""),
+    "Get your API key from Google AI Studio:\n" +
+      color.cyan("https://aistudio.google.com/apikey"),
     "Gemini Setup"
   );
 
+  // Loop to allow retrying API key entry
   while (true) {
     const apiKey = await p.password({
       message: "Enter your Google Gemini API key:",
@@ -568,12 +403,22 @@ async function configureGemini(): Promise<ProviderConfig | null> {
 
     if (p.isCancel(apiKey)) return null;
 
+    // Test connection
     const result = await testConnectionWithSpinner("Gemini", () =>
       testGeminiConnection(apiKey)
     );
 
     if (result.success) {
-      const envVarName = PROVIDER_ENV_VARS["google"] ?? "GEMINI_API_KEY";
+      // Select default model
+      const defaultModel = await p.select({
+        message: "Select default Gemini model:",
+        options: GEMINI_MODELS,
+      });
+
+      if (p.isCancel(defaultModel)) return null;
+
+      // Store env var reference instead of actual key
+      const envVarName = PROVIDER_ENV_VARS["google"]!;
       configuredEnvVars.set(envVarName, apiKey);
 
       p.log.info(
@@ -585,8 +430,9 @@ async function configureGemini(): Promise<ProviderConfig | null> {
       };
     }
 
+    // Test failed - ask what to do
     const action = await p.select({
-      message: `Connection failed: ${result.error}. What would you like to do?`,
+      message: "Connection test failed. What would you like to do?",
       options: [
         { value: "retry", label: "Re-enter API key", hint: "Try a different key" },
         { value: "skip", label: "Skip this provider" },
@@ -597,22 +443,24 @@ async function configureGemini(): Promise<ProviderConfig | null> {
     if (p.isCancel(action) || action === "skip") return null;
 
     if (action === "add") {
-      const envVarName = PROVIDER_ENV_VARS["google"] ?? "GEMINI_API_KEY";
+      const envVarName = PROVIDER_ENV_VARS["google"]!;
       configuredEnvVars.set(envVarName, apiKey);
 
       return {
         api_key: "${" + envVarName + "}",
       };
     }
+    // action === "retry" - loop continues
   }
 }
 
 /**
- * Configure Ollama provider.
+ * Configure Ollama provider
  */
 async function configureOllama(): Promise<ProviderConfig | null> {
   p.log.step(color.bold("Ollama Configuration"));
 
+  // Loop to allow retrying URL entry
   while (true) {
     const baseUrl = await p.text({
       message: "Enter Ollama base URL:",
@@ -630,13 +478,25 @@ async function configureOllama(): Promise<ProviderConfig | null> {
 
     if (p.isCancel(baseUrl)) return null;
 
+    // Test connection and get models
     const result = await testConnectionWithSpinner("Ollama", () =>
       testOllamaConnection(baseUrl)
     );
 
     if (result.success) {
+      // Select models to use if available
       if (result.models && result.models.length > 0) {
-        p.log.success(`Found ${result.models.length} installed model(s): ${result.models.slice(0, 3).join(", ")}${result.models.length > 3 ? "..." : ""}`);
+        const modelChoice = await p.select({
+          message: "Select default model:",
+          options: result.models.map((m) => ({
+            value: m,
+            label: m,
+          })),
+        });
+
+        if (p.isCancel(modelChoice)) return null;
+
+        p.log.success(`Found ${result.models.length} installed model(s)`);
       } else {
         p.log.warn("No models found. Pull a model with: ollama pull llama3.2");
       }
@@ -646,11 +506,12 @@ async function configureOllama(): Promise<ProviderConfig | null> {
       };
     }
 
+    // Test failed - show help and ask what to do
     p.note(
       "Make sure Ollama is running:\n" +
         color.cyan("  ollama serve") +
         "\n\nOr install from:\n" +
-        color.cyan("  " + (PROVIDER_DOCS["ollama"] ?? "")),
+        color.cyan("  https://ollama.ai"),
       "Ollama Not Running"
     );
 
@@ -670,35 +531,57 @@ async function configureOllama(): Promise<ProviderConfig | null> {
         base_url: baseUrl,
       };
     }
+    // action === "retry" - loop continues
   }
 }
 
 // ============================================================================
-// Role Configuration
+// Role Configuration Functions
 // ============================================================================
 
 /**
- * Get available models for a provider.
+ * Get model options for a provider
  */
-function getProviderModels(providerName: string): ModelOption[] {
-  return PROVIDER_MODELS[providerName] ?? [{ value: "default", label: "Default model" }];
+function getProviderModels(
+  providerName: string
+): { value: string; label: string; hint?: string }[] {
+  switch (providerName) {
+    case "anthropic":
+      return ANTHROPIC_MODELS;
+    case "openai":
+      return OPENAI_MODELS;
+    case "google":
+      return GEMINI_MODELS;
+    case "ollama":
+      return [
+        { value: "llama3.2", label: "Llama 3.2", hint: "Default local model" },
+        { value: "qwen3:32b", label: "Qwen 3 32B", hint: "Alternative" },
+        { value: "codellama", label: "CodeLlama", hint: "Code-focused" },
+      ];
+    default:
+      return [{ value: "default", label: "Default model" }];
+  }
 }
 
 /**
- * Configure role assignments.
+ * Configure role assignments
  */
 async function configureRoles(
   configuredProviders: string[]
 ): Promise<Record<string, RoleConfig>> {
   p.log.step(color.bold("Role Configuration"));
+  p.log.info(color.dim("Assign each agent role to a provider and model"));
 
-  const setupType = await p.select({
-    message: "How would you like to configure agent roles?",
+  const roles: Record<string, RoleConfig> = {};
+
+  // Ask how to configure roles
+  const configMode = await p.select({
+    message: "How would you like to configure roles?",
     options: [
       {
         value: "quick",
         label: "Quick setup",
-        hint: "Use recommended providers for each role",
+        hint: "Use recommended defaults for configured providers",
       },
       {
         value: "custom",
@@ -708,189 +591,127 @@ async function configureRoles(
     ],
   });
 
-  if (p.isCancel(setupType)) {
-    return generateDefaultRoles(configuredProviders);
+  if (p.isCancel(configMode)) {
+    // Return default roles using first configured provider
+    return buildDefaultRoles(configuredProviders);
   }
 
-  const roles: Record<string, RoleConfig> = {};
-
-  if (setupType === "quick") {
-    // Quick setup: use defaults, falling back to first available provider
-    const roleConfigs: Array<{ role: string; provider: string; model: string }> = [];
-
-    for (const role of AGENT_ROLES) {
-      let provider = role.recommendedProvider;
-      let model = role.recommendedModel;
-
-      // If recommended provider is not configured, use first available
-      if (!configuredProviders.includes(provider)) {
-        provider = configuredProviders[0] ?? "anthropic";
-        const models = getProviderModels(provider);
-        model = models[0]?.value ?? "default";
-      }
-
-      const systemPrompt = DEFAULT_SYSTEM_PROMPTS[role.value] ?? "";
-      const roleConfig: RoleConfig = {
-        provider,
-        model,
-        system_prompt: systemPrompt,
-      };
-      if (role.value === "critic" || role.value === "reviewer") {
-        roleConfig.temperature = 0.3;
-      }
-      roles[role.value] = roleConfig;
-
-      roleConfigs.push({ role: role.label, provider, model });
-    }
-
-    // Display summary
-    displayRoleSummary(roleConfigs);
-    p.log.success(`Configured ${Object.keys(roles).length} roles with recommended settings`);
-
-    return roles;
+  if (configMode === "quick") {
+    return buildDefaultRoles(configuredProviders);
   }
 
-  // Custom setup: let user configure each role
-  p.log.message(color.dim("Configure each role or press Enter to use defaults."));
-
+  // Custom configuration - let user select for each role
   for (const role of AGENT_ROLES) {
     console.log();
     p.log.step(color.cyan(`Configuring: ${role.label}`));
     console.log(color.dim(`  ${role.hint}`));
 
-    // Build provider options - filter out undefined hints for TypeScript
+    // Build provider options
     const providerOptions: Array<{ value: string; label: string; hint?: string }> =
-      configuredProviders.map((prov) => {
-        const isRecommended = prov === role.recommendedProvider;
-        const opt: { value: string; label: string; hint?: string } = {
-          value: prov,
-          label: prov,
+      configuredProviders.map((provider) => {
+        const option: { value: string; label: string; hint?: string } = {
+          value: provider,
+          label: provider,
         };
-        if (isRecommended) {
-          opt.hint = "Recommended";
+        if (provider === role.defaultProvider) {
+          option.hint = `${role.defaultModel} [Recommended]`;
         }
-        return opt;
+        return option;
       });
 
-    const selectedProvider = await p.select({
-      message: `Provider for ${role.label}:`,
-      options: providerOptions,
-      initialValue: configuredProviders.includes(role.recommendedProvider)
-        ? role.recommendedProvider
-        : configuredProviders[0],
+    // Add skip option
+    providerOptions.push({
+      value: "__skip__",
+      label: "Skip this role",
+      hint: "Don't configure this role",
     });
 
-    if (p.isCancel(selectedProvider)) {
-      // Use default for remaining roles
-      const defaultProv = configuredProviders[0] ?? "anthropic";
-      roles[role.value] = {
-        provider: defaultProv,
-        model: getProviderModels(defaultProv)[0]?.value ?? "default",
-        system_prompt: DEFAULT_SYSTEM_PROMPTS[role.value] ?? "",
-      };
+    const selectedProvider = await p.select({
+      message: `Which provider for ${role.label.toLowerCase()}?`,
+      options: providerOptions,
+    });
+
+    if (p.isCancel(selectedProvider) || selectedProvider === "__skip__") {
       continue;
     }
 
-    // Select model for this provider
+    // Let user select model
     const modelOptions = getProviderModels(selectedProvider as string);
     const selectedModel = await p.select({
       message: "Select model:",
       options: modelOptions,
     });
 
-    if (p.isCancel(selectedModel)) {
-      roles[role.value] = {
-        provider: selectedProvider as string,
-        model: modelOptions[0]?.value ?? "default",
-        system_prompt: DEFAULT_SYSTEM_PROMPTS[role.value] ?? "",
-      };
-      continue;
-    }
+    if (p.isCancel(selectedModel)) continue;
 
-    const customRoleConfig: RoleConfig = {
+    roles[role.value] = {
       provider: selectedProvider as string,
       model: selectedModel as string,
-      system_prompt: DEFAULT_SYSTEM_PROMPTS[role.value] ?? "",
+      system_prompt: role.systemPrompt,
+      ...(role.temperature !== undefined ? { temperature: role.temperature } : {}),
     };
-    if (role.value === "critic" || role.value === "reviewer") {
-      customRoleConfig.temperature = 0.3;
-    }
-    roles[role.value] = customRoleConfig;
 
     console.log(
-      color.green(`  ✓ ${role.label}: ${selectedProvider} → ${selectedModel}`)
+      color.green(`  + ${role.value}`) +
+        color.dim(` -> ${selectedProvider}/${selectedModel}`)
     );
   }
 
+  // If no roles configured, use defaults
+  if (Object.keys(roles).length === 0) {
+    p.log.warn("No roles configured. Using defaults.");
+    return buildDefaultRoles(configuredProviders);
+  }
+
   return roles;
 }
 
 /**
- * Generate default roles using available providers.
+ * Build default role configurations based on configured providers
  */
-function generateDefaultRoles(configuredProviders: string[]): Record<string, RoleConfig> {
+function buildDefaultRoles(configuredProviders: string[]): Record<string, RoleConfig> {
   const roles: Record<string, RoleConfig> = {};
-  const defaultProvider = configuredProviders[0] ?? "anthropic";
-  const defaultModel = getProviderModels(defaultProvider)[0]?.value ?? "default";
 
   for (const role of AGENT_ROLES) {
-    let provider = role.recommendedProvider;
-    let model = role.recommendedModel;
+    // Use recommended provider if available, otherwise use first configured provider
+    let provider = role.defaultProvider;
+    let model = role.defaultModel;
 
     if (!configuredProviders.includes(provider)) {
-      provider = defaultProvider;
-      model = defaultModel;
+      provider = configuredProviders[0]!;
+      // Get appropriate model for fallback provider
+      const models = getProviderModels(provider);
+      model = models[0]?.value ?? "default";
     }
 
-    const defaultRoleConfig: RoleConfig = {
+    roles[role.value] = {
       provider,
       model,
-      system_prompt: DEFAULT_SYSTEM_PROMPTS[role.value] ?? "",
+      system_prompt: role.systemPrompt,
+      ...(role.temperature !== undefined ? { temperature: role.temperature } : {}),
     };
-    if (role.value === "critic" || role.value === "reviewer") {
-      defaultRoleConfig.temperature = 0.3;
-    }
-    roles[role.value] = defaultRoleConfig;
   }
+
+  // Display summary
+  console.log();
+  console.log(color.bold("  Role Assignments"));
+  console.log();
+  for (const [roleName, roleConfig] of Object.entries(roles)) {
+    console.log(
+      `  ${color.cyan(roleName.padEnd(12))} -> ${roleConfig.provider}/${color.dim(roleConfig.model)}`
+    );
+  }
+  console.log();
 
   return roles;
 }
 
-/**
- * Display role configuration summary.
- */
-function displayRoleSummary(
-  roleConfigs: Array<{ role: string; provider: string; model: string }>
-): void {
-  console.log();
-  console.log(color.bold("  Role Configuration Summary"));
-  console.log();
-
-  const roleWidth = Math.max(12, ...roleConfigs.map((rc) => rc.role.length));
-  const providerWidth = Math.max(10, ...roleConfigs.map((rc) => rc.provider.length));
-
-  // Header
-  const headerLine = `  ${"Role".padEnd(roleWidth)} ${"Provider".padEnd(providerWidth)} ${"Model"}`;
-  console.log(color.dim(headerLine));
-  console.log(color.dim("  " + "-".repeat(headerLine.length - 2)));
-
-  // Rows
-  for (const { role, provider, model } of roleConfigs) {
-    const roleCol = color.cyan(role.padEnd(roleWidth));
-    const providerCol = provider.padEnd(providerWidth);
-    const modelCol = color.dim(model);
-    console.log(`  ${roleCol} ${providerCol} ${modelCol}`);
-  }
-
-  console.log();
-}
-
 // ============================================================================
-// Environment Variable Handling
+// Shell Profile Integration
 // ============================================================================
 
 /**
- * Get the appropriate shell profile path.
+ * Get the appropriate shell profile path based on the current shell
  */
 function getShellProfilePath(): string {
   const shell = process.env["SHELL"] ?? "";
@@ -901,7 +722,7 @@ function getShellProfilePath(): string {
 }
 
 /**
- * Add environment variables to shell profile.
+ * Add environment variables to the user's shell profile
  */
 async function addEnvVarsToShellProfile(): Promise<void> {
   if (configuredEnvVars.size === 0) {
@@ -911,26 +732,30 @@ async function addEnvVarsToShellProfile(): Promise<void> {
   const profilePath = getShellProfilePath();
   const profileName = path.basename(profilePath);
 
+  // Ask user if they want to add env vars to shell profile
   const shouldAdd = await p.confirm({
     message: `Add API keys to ~/${profileName}?`,
     initialValue: true,
   });
 
   if (p.isCancel(shouldAdd) || !shouldAdd) {
-    p.log.info("You'll need to set environment variables manually.");
-    displayEnvVarsManual();
+    p.log.info("You'll need to set the environment variables manually.");
+    displayEnvVarsSummary();
     return;
   }
 
   try {
+    // Read existing profile content (or empty string if file doesn't exist)
     let profileContent = "";
     if (fs.existsSync(profilePath)) {
       profileContent = fs.readFileSync(profilePath, "utf-8");
     }
 
+    // Collect env vars to add
     const envVarsToAdd: Array<{ name: string; value: string }> = [];
 
     for (const [envVar, value] of configuredEnvVars) {
+      // Check if this env var already exists in the profile
       const existsPattern = new RegExp(`^\\s*export\\s+${envVar}=`, "m");
       if (!existsPattern.test(profileContent)) {
         envVarsToAdd.push({ name: envVar, value });
@@ -942,19 +767,25 @@ async function addEnvVarsToShellProfile(): Promise<void> {
       return;
     }
 
-    // Build export block
+    // Build the export block
     const exportLines: string[] = [];
     exportLines.push("");
-    exportLines.push("# AgentRouter API Keys");
+    exportLines.push("# AgentRouter");
     for (const { name, value } of envVarsToAdd) {
       exportLines.push(`export ${name}="${value}"`);
     }
     const exportBlock = exportLines.join("\n");
 
-    // Append to profile
-    fs.appendFileSync(profilePath, exportBlock + "\n", "utf-8");
+    // Ensure we add a newline before our block if the file doesn't end with one
+    let prefix = "";
+    if (profileContent.length > 0 && !profileContent.endsWith("\n")) {
+      prefix = "\n";
+    }
 
-    p.log.success(`Added ${envVarsToAdd.length} environment variable(s) to ~/${profileName}`);
+    // Append to profile
+    fs.appendFileSync(profilePath, prefix + exportBlock + "\n", "utf-8");
+
+    p.log.success(`Added environment variables to ~/${profileName}`);
     p.log.info(
       `Run ${color.cyan(`source ~/${profileName}`)} to apply changes (or restart your terminal)`
     );
@@ -962,33 +793,36 @@ async function addEnvVarsToShellProfile(): Promise<void> {
     p.log.error(
       `Failed to update ${profilePath}: ${error instanceof Error ? error.message : "Unknown error"}`
     );
-    displayEnvVarsManual();
+    p.log.info("You'll need to add the environment variables manually:");
+    displayEnvVarsSummary();
   }
 }
 
 /**
- * Display manual environment variable setup instructions.
+ * Display environment variables summary with export commands
  */
-function displayEnvVarsManual(): void {
-  if (configuredEnvVars.size === 0) return;
+function displayEnvVarsSummary(): void {
+  if (configuredEnvVars.size === 0) {
+    return;
+  }
 
-  const lines: string[] = [];
-  lines.push(color.bold("Set these environment variables:"));
-  lines.push("");
+  console.log();
+  console.log(color.bold("Set these environment variables:"));
+  console.log();
 
   for (const [envVar] of configuredEnvVars) {
-    lines.push(`  ${color.cyan(`export ${envVar}="your-api-key-here"`)}`);
+    console.log(`  ${color.cyan(`export ${envVar}="your-api-key-here"`)}`);
   }
 
-  p.note(lines.join("\n"), "Required Environment Variables");
+  console.log();
 }
 
 // ============================================================================
-// Configuration Generation
+// Config Generation and Saving
 // ============================================================================
 
 /**
- * Generate the full configuration object.
+ * Generate the full configuration object
  */
 function generateConfig(
   providers: Record<string, ProviderConfig>,
@@ -996,49 +830,50 @@ function generateConfig(
 ): Config {
   return {
     version: "1.0",
+
     defaults: {
       temperature: 0.7,
       max_tokens: 4096,
       timeout_ms: 60000,
     },
+
     roles,
     providers,
   };
 }
 
 /**
- * Generate configuration summary.
+ * Generate configuration summary for display
  */
 function generateConfigSummary(config: Config, configPath: string): string {
   const lines: string[] = [];
 
-  lines.push(`  ${color.bold("Version:")} ${config.version}`);
+  // Config path
+  lines.push(`  ${color.bold("Config:")} ${color.dim(configPath)}`);
   lines.push("");
 
   // Providers summary
-  const providerCount = Object.keys(config.providers).length;
-  lines.push(`  ${color.bold(`Providers (${providerCount}):`)} `);
-  for (const [name] of Object.entries(config.providers)) {
-    lines.push(`    ${color.green("✓")} ${name}`);
+  const providerNames = Object.keys(config.providers);
+  lines.push(`  ${color.bold(`Providers (${providerNames.length}):`)} `);
+  for (const name of providerNames) {
+    lines.push(`    ${color.green("+")} ${name}`);
   }
   lines.push("");
 
   // Roles summary
-  const roleCount = Object.keys(config.roles).length;
-  lines.push(`  ${color.bold(`Roles (${roleCount}):`)}`);
-  for (const [name, role] of Object.entries(config.roles)) {
-    lines.push(`    ${color.cyan(name)} ${color.dim("→")} ${role.provider}/${role.model}`);
+  const roleNames = Object.keys(config.roles);
+  lines.push(`  ${color.bold(`Roles (${roleNames.length}):`)} `);
+  for (const [name, roleConfig] of Object.entries(config.roles)) {
+    lines.push(
+      `    ${color.cyan(name.padEnd(12))} -> ${roleConfig.provider}/${color.dim(roleConfig.model)}`
+    );
   }
-  lines.push("");
-
-  // Config path
-  lines.push(`  ${color.bold("Config:")} ${color.dim(configPath)}`);
 
   return lines.join("\n");
 }
 
 /**
- * Save configuration to file.
+ * Save configuration to file
  */
 async function saveConfig(config: Config): Promise<boolean> {
   const configPath = getUserConfigPath();
@@ -1057,17 +892,17 @@ async function saveConfig(config: Config): Promise<boolean> {
       p.log.info(`Backed up existing config to: ${color.dim(backupPath)}`);
     }
 
-    // Add header comment
+    // Generate YAML with header
     const header = `# AgentRouter Configuration
 # Generated by: agent-router setup
 # Documentation: https://github.com/hive-dev/agent-router
 #
 # Environment variables can be interpolated using \${VAR_NAME} syntax.
+# Example: api_key: \${ANTHROPIC_API_KEY}
 
 `;
 
-    // Write new config
-    const yamlContent = yaml.stringify(config, {
+    const yamlContent = yamlStringify(config, {
       indent: 2,
       lineWidth: 100,
     });
@@ -1083,11 +918,22 @@ async function saveConfig(config: Config): Promise<boolean> {
 }
 
 // ============================================================================
+// Clear State
+// ============================================================================
+
+/**
+ * Clear configured env vars (for fresh setup)
+ */
+function clearConfiguredEnvVars(): void {
+  configuredEnvVars.clear();
+}
+
+// ============================================================================
 // Main Setup Wizard
 // ============================================================================
 
 /**
- * Run the main setup wizard.
+ * Run the main setup wizard
  */
 export async function runSetupWizard(): Promise<void> {
   displayBanner();
@@ -1096,25 +942,16 @@ export async function runSetupWizard(): Promise<void> {
 
   // Provider selection
   p.log.message(
-    color.dim("Use ↑↓ to navigate, space to select, enter to confirm.")
+    color.dim("Use arrow keys to navigate, space to select, enter to confirm.")
   );
-
-  // Build multiselect options - filter out undefined hints for TypeScript
-  const providerSelectOptions: Array<{ value: string; label: string; hint?: string }> =
-    AVAILABLE_PROVIDERS.map((provider) => {
-      const opt: { value: string; label: string; hint?: string } = {
-        value: provider.value,
-        label: provider.label,
-      };
-      if (provider.hint) {
-        opt.hint = provider.hint;
-      }
-      return opt;
-    });
 
   const selectedProviders = await p.multiselect({
     message: "Which providers would you like to configure?",
-    options: providerSelectOptions,
+    options: AVAILABLE_PROVIDERS.map((provider) => ({
+      value: provider.value,
+      label: provider.label,
+      ...(provider.hint ? { hint: provider.hint } : {}),
+    })),
     required: true,
   });
 
@@ -1158,6 +995,7 @@ export async function runSetupWizard(): Promise<void> {
   }
 
   // Configure roles
+  console.log();
   const roles = await configureRoles(configuredProviderNames);
 
   // Generate config
@@ -1175,14 +1013,15 @@ export async function runSetupWizard(): Promise<void> {
   });
 
   if (p.isCancel(saveConfirm) || !saveConfirm) {
-    // Offer to print YAML
-    const printYaml = await p.confirm({
-      message: "Print YAML configuration to console instead?",
+    // Offer to print full config
+    const printConfig = await p.confirm({
+      message: "Print full YAML configuration to console instead?",
       initialValue: true,
     });
 
-    if (!p.isCancel(printYaml) && printYaml) {
-      console.log("\n" + yaml.stringify(config, { indent: 2 }));
+    if (!p.isCancel(printConfig) && printConfig) {
+      const yamlOutput = yamlStringify(config, { indent: 2, lineWidth: 100 });
+      console.log("\n" + yamlOutput);
     }
 
     p.outro(color.yellow("Configuration not saved"));
@@ -1197,77 +1036,214 @@ export async function runSetupWizard(): Promise<void> {
     return;
   }
 
-  // Handle environment variables
+  // Add env vars to shell profile
   console.log();
   await addEnvVarsToShellProfile();
 
-  // Final instructions
+  // Success outro
   console.log();
   const shellProfile = getShellProfilePath();
   p.note(
     `${color.bold("1. Restart your terminal or run:")}\n` +
-      `  ${color.cyan(`source ${shellProfile}`)}\n\n` +
-      `${color.bold("2. Start the MCP server:")}\n` +
-      `  ${color.cyan("agent-router start")}\n\n` +
-      `${color.bold("3. Use with Claude Code:")}\n` +
-      `  Add agent-router to your MCP config`,
+      `   ${color.cyan(`source ${shellProfile}`)}\n\n` +
+      `${color.bold("2. Add AgentRouter to Claude Code's MCP config:")}\n` +
+      `   ${color.cyan("~/.config/claude-code/mcp.json")}\n\n` +
+      `${color.bold("3. Invoke agents from Claude Code:")}\n` +
+      `   ${color.cyan('Use invoke_agent with role: "coder", "critic", etc.')}`,
     "Next Steps"
   );
 
-  // Clear env vars tracking
-  configuredEnvVars.clear();
+  // Clear env vars tracking for next run
+  clearConfiguredEnvVars();
 
   p.outro(color.green("Setup complete!"));
 }
 
-/**
- * Clear configured env vars (for testing).
- */
-export function clearConfiguredEnvVars(): void {
-  configuredEnvVars.clear();
-}
-
 // ============================================================================
-// Stub Exports for CLI Compatibility
+// Additional CLI Commands
 // ============================================================================
 
 /**
- * Add a provider interactively.
- * This is a stub that redirects to the full setup wizard.
+ * Add a single provider interactively
  */
-export async function addProvider(_providerName?: string): Promise<void> {
-  p.log.warn("The 'provider add' command is deprecated.");
-  p.log.info("Please use 'agent-router setup' to configure providers interactively.");
-  process.exit(0);
+export async function addProvider(providerName?: string): Promise<void> {
+  p.intro(color.bgCyan(color.black(" Add Provider ")));
+
+  // Load existing config if present
+  const configPath = getUserConfigPath();
+  let existingConfig: Config | null = null;
+
+  if (fs.existsSync(configPath)) {
+    try {
+      const content = fs.readFileSync(configPath, "utf-8");
+      const yaml = await import("yaml");
+      existingConfig = yaml.parse(content) as Config;
+    } catch {
+      p.log.warn("Could not load existing config, will create new one");
+    }
+  }
+
+  // Select provider to add
+  let providerType: string | symbol;
+
+  if (providerName && AVAILABLE_PROVIDERS.some((p) => p.value === providerName)) {
+    providerType = providerName;
+  } else {
+    providerType = await p.select({
+      message: "Select provider to add:",
+      options: AVAILABLE_PROVIDERS.map((provider) => ({
+        value: provider.value,
+        label: provider.label,
+        ...(provider.hint ? { hint: provider.hint } : {}),
+      })),
+    });
+
+    if (p.isCancel(providerType)) {
+      p.cancel("Cancelled");
+      return;
+    }
+  }
+
+  let config: ProviderConfig | null = null;
+
+  switch (providerType) {
+    case "anthropic":
+      config = await configureAnthropic();
+      break;
+    case "openai":
+      config = await configureOpenAI();
+      break;
+    case "google":
+      config = await configureGemini();
+      break;
+    case "ollama":
+      config = await configureOllama();
+      break;
+  }
+
+  if (!config) {
+    p.cancel("Provider configuration cancelled");
+    return;
+  }
+
+  // Update or create config
+  if (existingConfig) {
+    // Check if provider already exists
+    if (existingConfig.providers[providerType as string]) {
+      const replace = await p.confirm({
+        message: `Provider "${providerType}" already exists. Replace it?`,
+        initialValue: true,
+      });
+
+      if (p.isCancel(replace) || !replace) {
+        p.cancel("Cancelled");
+        return;
+      }
+    }
+
+    existingConfig.providers[providerType as string] = config;
+
+    // Save updated config
+    const saved = await saveConfig(existingConfig);
+
+    if (saved) {
+      // Add env vars to shell profile
+      if (configuredEnvVars.size > 0) {
+        console.log();
+        await addEnvVarsToShellProfile();
+      }
+
+      clearConfiguredEnvVars();
+      p.outro(color.green(`Added ${providerType} provider`));
+    } else {
+      p.outro(color.red("Failed to save configuration"));
+    }
+  } else {
+    // Create new config with just this provider
+    const newConfig = generateConfig(
+      { [providerType as string]: config },
+      buildDefaultRoles([providerType as string])
+    );
+
+    const saved = await saveConfig(newConfig);
+
+    if (saved) {
+      // Add env vars to shell profile
+      if (configuredEnvVars.size > 0) {
+        console.log();
+        await addEnvVarsToShellProfile();
+      }
+
+      clearConfiguredEnvVars();
+      p.outro(color.green(`Created config with ${providerType} provider`));
+    } else {
+      p.outro(color.red("Failed to save configuration"));
+    }
+  }
 }
 
 /**
- * Test provider connections.
- * This is a stub that provides basic connection testing.
+ * Test provider connection
  */
 export async function testProvider(providerName?: string): Promise<void> {
-  displayBanner();
-  p.intro(color.bgCyan(color.black(" AgentRouter Provider Test ")));
+  p.intro(color.bgCyan(color.black(" Provider Connection Test ")));
 
-  // Load existing config
   const configPath = getUserConfigPath();
+
   if (!fs.existsSync(configPath)) {
-    p.log.error("No configuration found. Run 'agent-router setup' first.");
-    process.exit(1);
+    p.log.warn("No configuration found. Run: agent-router setup");
+    p.outro(color.yellow("No providers to test"));
+    return;
   }
 
-  const configContent = fs.readFileSync(configPath, "utf-8");
-  const config = yaml.parse(configContent) as Config;
-
-  const providersToTest = providerName
-    ? [providerName]
-    : Object.keys(config.providers);
-
-  if (providerName && !config.providers[providerName]) {
-    p.log.error(`Provider '${providerName}' not found in configuration.`);
-    p.log.info(`Configured providers: ${Object.keys(config.providers).join(", ")}`);
-    process.exit(1);
+  let config: Config;
+  try {
+    const content = fs.readFileSync(configPath, "utf-8");
+    const yaml = await import("yaml");
+    config = yaml.parse(content) as Config;
+  } catch (error) {
+    p.log.error(
+      `Failed to load config: ${error instanceof Error ? error.message : "Unknown error"}`
+    );
+    p.outro(color.red("Test failed"));
+    return;
   }
+
+  const providerNames = Object.keys(config.providers);
+
+  if (providerNames.length === 0) {
+    p.log.warn("No providers configured. Run: agent-router setup");
+    p.outro(color.yellow("No providers to test"));
+    return;
+  }
+
+  // Select provider to test if not specified
+  let selectedProvider: string;
+
+  if (providerName && providerNames.includes(providerName)) {
+    selectedProvider = providerName;
+  } else {
+    const selected = await p.select({
+      message: "Select provider to test:",
+      options: [
+        { value: "__all__", label: "Test all providers" },
+        ...providerNames.map((name) => ({
+          value: name,
+          label: name,
+        })),
+      ],
+    });
+
+    if (p.isCancel(selected)) {
+      p.cancel("Test cancelled");
+      return;
+    }
+
+    selectedProvider = selected as string;
+  }
+
+  const providersToTest =
+    selectedProvider === "__all__" ? providerNames : [selectedProvider];
 
   let allPassed = true;
 
@@ -1275,112 +1251,125 @@ export async function testProvider(providerName?: string): Promise<void> {
     const providerConfig = config.providers[name];
     if (!providerConfig) continue;
 
-    const spinner = p.spinner();
-    spinner.start(`Testing ${name}...`);
+    let result: ConnectionTestResult;
 
-    try {
-      let result: { success: boolean; error?: string };
-
-      switch (name) {
-        case "anthropic": {
-          const apiKey = providerConfig.api_key?.includes("${")
-            ? process.env[providerConfig.api_key.replace(/\$\{|\}/g, "")] ?? ""
-            : providerConfig.api_key ?? "";
-          result = await testAnthropicConnection(apiKey);
-          break;
-        }
-        case "openai": {
-          const apiKey = providerConfig.api_key?.includes("${")
-            ? process.env[providerConfig.api_key.replace(/\$\{|\}/g, "")] ?? ""
-            : providerConfig.api_key ?? "";
-          result = await testOpenAIConnection(apiKey);
-          break;
-        }
-        case "google": {
-          const apiKey = providerConfig.api_key?.includes("${")
-            ? process.env[providerConfig.api_key.replace(/\$\{|\}/g, "")] ?? ""
-            : providerConfig.api_key ?? "";
-          result = await testGeminiConnection(apiKey);
-          break;
-        }
-        case "ollama": {
-          const baseUrl = providerConfig.base_url ?? "http://localhost:11434";
-          result = await testOllamaConnection(baseUrl);
-          break;
-        }
-        default:
-          result = { success: false, error: "Unknown provider" };
-      }
-
-      if (result.success) {
-        spinner.stop(color.green(`${name}: Connection successful`));
-      } else {
-        spinner.stop(color.red(`${name}: ${result.error}`));
+    // Resolve env vars in API key
+    let apiKey = providerConfig.api_key ?? "";
+    const envVarMatch = apiKey.match(/\$\{(\w+)\}/);
+    if (envVarMatch) {
+      const envVarName = envVarMatch[1];
+      apiKey = process.env[envVarName!] ?? "";
+      if (!apiKey) {
+        p.log.error(`Environment variable ${envVarName} is not set`);
         allPassed = false;
+        continue;
       }
-    } catch (error) {
-      spinner.stop(color.red(`${name}: ${error instanceof Error ? error.message : "Unknown error"}`));
+    }
+
+    switch (name) {
+      case "anthropic":
+        result = await testConnectionWithSpinner("Anthropic", () =>
+          testAnthropicConnection(apiKey, providerConfig.base_url)
+        );
+        break;
+      case "openai":
+        result = await testConnectionWithSpinner("OpenAI", () =>
+          testOpenAIConnection(apiKey, providerConfig.base_url)
+        );
+        break;
+      case "google":
+        result = await testConnectionWithSpinner("Gemini", () =>
+          testGeminiConnection(apiKey)
+        );
+        break;
+      case "ollama":
+        result = await testConnectionWithSpinner("Ollama", () =>
+          testOllamaConnection(providerConfig.base_url)
+        );
+        if (result.success && result.models) {
+          p.log.info(`Available models: ${result.models.join(", ")}`);
+        }
+        break;
+      default:
+        p.log.warn(`Unknown provider type: ${name}`);
+        result = { success: false, latencyMs: 0, error: "Unknown provider" };
+    }
+
+    if (!result.success) {
       allPassed = false;
     }
   }
 
   if (allPassed) {
-    p.outro(color.green("All providers passed connection test"));
+    p.outro(color.green("All connection tests passed"));
   } else {
-    p.outro(color.yellow("Some providers failed connection test"));
-    process.exit(1);
+    p.outro(color.red("Some connection tests failed"));
   }
 }
 
 /**
- * List configured providers.
+ * List configured providers
  */
 export async function listProviders(): Promise<void> {
-  displayBanner();
-  p.intro(color.bgCyan(color.black(" AgentRouter Providers ")));
+  p.intro(color.bgCyan(color.black(" Configured Providers ")));
 
   const configPath = getUserConfigPath();
+
   if (!fs.existsSync(configPath)) {
-    p.log.error("No configuration found. Run 'agent-router setup' first.");
-    process.exit(1);
+    p.log.warn("No configuration found. Run: agent-router setup");
+    p.outro(color.yellow("No providers configured"));
+    return;
   }
 
-  const configContent = fs.readFileSync(configPath, "utf-8");
-  const config = yaml.parse(configContent) as Config;
+  let config: Config;
+  try {
+    const content = fs.readFileSync(configPath, "utf-8");
+    const yaml = await import("yaml");
+    config = yaml.parse(content) as Config;
+  } catch (error) {
+    p.log.error(
+      `Failed to load config: ${error instanceof Error ? error.message : "Unknown error"}`
+    );
+    p.outro(color.red("Error reading configuration"));
+    return;
+  }
 
   const providers = Object.entries(config.providers);
 
   if (providers.length === 0) {
-    p.log.warn("No providers configured.");
-    process.exit(0);
+    p.log.warn("No providers configured");
+    p.outro(color.yellow("Run: agent-router setup"));
+    return;
   }
 
   console.log();
-  console.log(color.bold("  Configured Providers"));
-  console.log();
 
   for (const [name, providerConfig] of providers) {
-    console.log(`  ${color.cyan(name)}`);
+    console.log(`  ${color.bold(name)}`);
 
     if (providerConfig.base_url) {
-      console.log(`    Base URL: ${color.dim(providerConfig.base_url)}`);
+      console.log(`    ${color.dim("URL:")} ${providerConfig.base_url}`);
     }
 
     if (providerConfig.api_key) {
-      if (providerConfig.api_key.includes("${")) {
-        const envVar = providerConfig.api_key.replace(/\$\{|\}/g, "");
-        const isSet = !!process.env[envVar];
-        console.log(
-          `    API Key: ${providerConfig.api_key} ${isSet ? color.green("(set)") : color.red("(NOT SET)")}`
-        );
-      } else {
-        console.log(`    API Key: ${color.dim("****" + providerConfig.api_key.slice(-4))}`);
-      }
+      const keyDisplay = providerConfig.api_key.includes("${")
+        ? providerConfig.api_key
+        : "[REDACTED]";
+      console.log(`    ${color.dim("Key:")} ${keyDisplay}`);
     }
 
     console.log();
   }
 
-  p.log.info(`Configuration file: ${color.dim(configPath)}`);
+  // Show roles using each provider
+  console.log(color.bold("  Role Assignments:"));
+  for (const [roleName, roleConfig] of Object.entries(config.roles)) {
+    console.log(
+      `    ${color.cyan(roleName.padEnd(12))} -> ${roleConfig.provider}/${color.dim(roleConfig.model)}`
+    );
+  }
+  console.log();
+
+  p.log.info(`Config file: ${color.dim(configPath)}`);
   p.outro(`${providers.length} provider(s) configured`);
 }
