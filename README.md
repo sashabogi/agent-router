@@ -30,7 +30,7 @@ AgentRouter is an MCP (Model Context Protocol) server that enables multi-agent o
 
 ```bash
 # Install globally
-npm install -g @sashabogi/agent-router
+npm install -g mcp-agent-router
 
 # Or clone and build locally
 git clone https://github.com/sashabogi/agent-router.git

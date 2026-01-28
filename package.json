@@ -1,5 +1,5 @@
 {
-  "name": "@sashabogi/agent-router",
+  "name": "mcp-agent-router",
   "version": "3.0.0",
   "description": "MCP server for multi-agent orchestration - route tasks to specialized AI agents from different LLM providers",
   "type": "module",

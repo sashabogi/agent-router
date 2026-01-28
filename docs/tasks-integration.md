@@ -32,7 +32,7 @@ AgentRouter v3.0 adds **full integration** with Claude Code's Tasks system:
 ### 1. Update AgentRouter
 
 ```bash
-npm update @sashabogi/agent-router
+npm update mcp-agent-router
 ```
 
 ### 2. Enable Tasks Integration
