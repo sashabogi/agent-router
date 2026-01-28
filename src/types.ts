@@ -71,14 +71,25 @@ export interface FallbackConfig {
 }
 
 /**
+ * Access mode for providers.
+ * - "api": Uses API key with pay-per-token pricing
+ * - "subscription": Uses CLI tool with subscription (Claude Code, Codex CLI, Gemini CLI, etc.)
+ */
+export type AccessMode = "api" | "subscription";
+
+/**
  * Provider-specific configuration.
  * Contains credentials and settings for connecting to an LLM provider.
  */
 export interface ProviderConfig {
+  /** Access mode: "api" (pay-per-token) or "subscription" (CLI tools) */
+  access_mode?: AccessMode;
   /** API key for authentication (supports ${ENV_VAR} interpolation) */
   api_key?: string;
   /** Base URL for the provider API (for self-hosted or proxy setups) */
   base_url?: string;
+  /** Default model for this provider */
+  default_model?: string;
   /** Organization ID (OpenAI) */
   organization?: string;
   /** Project ID (Google Cloud / Vertex AI) */
@@ -222,7 +233,7 @@ export interface Tool {
 /**
  * Supported LLM provider types.
  */
-export type ProviderType = 'anthropic' | 'openai' | 'google' | 'ollama' | 'openrouter' | 'zai';
+export type ProviderType = 'anthropic' | 'openai' | 'google' | 'deepseek' | 'zai' | 'ollama' | 'openrouter';
 
 /**
  * Request to complete a conversation.

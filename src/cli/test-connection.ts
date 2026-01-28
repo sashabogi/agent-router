@@ -1,6 +1,8 @@
 /**
- * Provider connection testing utilities for AgentRouter
- * Tests connectivity to various LLM providers
+ * Provider connection testing utilities for AgentRouter v2
+ * Tests connectivity to LLM providers
+ * 
+ * Updated January 2026 to include Anthropic testing.
  */
 
 import * as p from "@clack/prompts";
@@ -21,20 +23,21 @@ export interface ConnectionTestResult {
  */
 export async function testAnthropicConnection(
   apiKey: string,
-  baseUrl: string = "https://api.anthropic.com"
+  baseUrl: string = "https://api.anthropic.com/v1"
 ): Promise<ConnectionTestResult> {
   const startTime = Date.now();
 
   try {
-    const response = await fetch(`${baseUrl}/v1/messages`, {
+    // Anthropic doesn't have a /models endpoint, so we do a minimal completion test
+    const response = await fetch(`${baseUrl}/messages`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        "anthropic-version": "2023-06-01",
         "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-haiku-4-5-20251001",
         max_tokens: 1,
         messages: [{ role: "user", content: "Hi" }],
       }),
@@ -51,11 +54,11 @@ export async function testAnthropicConnection(
     let errorMessage = `HTTP ${response.status}`;
 
     if (response.status === 401) {
-      errorMessage = "Authentication failed - invalid API key";
+      errorMessage = "Invalid API key - check your Anthropic console";
     } else if (response.status === 403) {
-      errorMessage = "Access denied - check API key permissions";
+      errorMessage = "API key lacks permission - check your Anthropic console";
     } else if (response.status === 429) {
-      errorMessage = "Rate limited - too many requests";
+      errorMessage = "Rate limited - quota exceeded";
     } else if (response.status >= 500) {
       errorMessage = "Anthropic server error - try again later";
     }
@@ -69,9 +72,7 @@ export async function testAnthropicConnection(
       if (error.name === "AbortError" || error.message.includes("timeout")) {
         errorMessage = "Connection timeout - server not responding";
       } else if (error.message.includes("ECONNREFUSED")) {
-        errorMessage = "Connection refused - server unreachable";
-      } else if (error.message.includes("ENOTFOUND")) {
-        errorMessage = "DNS lookup failed - invalid URL";
+        errorMessage = "Connection refused - check Anthropic service status";
       } else {
         errorMessage = error.message;
       }
@@ -185,6 +186,124 @@ export async function testGeminiConnection(
     return { success: false, latencyMs, error: errorMessage };
   }
 }
+
+/**
+ * Test DeepSeek API connection
+ */
+export async function testDeepSeekConnection(
+  apiKey: string,
+  baseUrl: string = "https://api.deepseek.com"
+): Promise<ConnectionTestResult> {
+  const startTime = Date.now();
+
+  try {
+    const response = await fetch(`${baseUrl}/models`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    const latencyMs = Date.now() - startTime;
+
+    if (response.ok) {
+      return { success: true, latencyMs };
+    }
+
+    await response.text(); // Consume body
+    let errorMessage = `HTTP ${response.status}`;
+
+    if (response.status === 401) {
+      errorMessage = "Invalid API key - check your DeepSeek dashboard";
+    } else if (response.status === 429) {
+      errorMessage = "Rate limited - quota exceeded";
+    } else if (response.status >= 500) {
+      errorMessage = "DeepSeek server error - try again later";
+    }
+
+    return { success: false, latencyMs, error: errorMessage };
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+    let errorMessage = "Unknown error";
+
+    if (error instanceof Error) {
+      if (error.name === "AbortError" || error.message.includes("timeout")) {
+        errorMessage = "Connection timeout - server not responding";
+      } else if (error.message.includes("ECONNREFUSED")) {
+        errorMessage = "Connection refused - check DeepSeek service status";
+      } else {
+        errorMessage = error.message;
+      }
+    }
+
+    return { success: false, latencyMs, error: errorMessage };
+  }
+}
+
+/**
+ * Test Z.AI (GLM) API connection
+ */
+export async function testZaiConnection(
+  apiKey: string,
+  baseUrl: string = "https://api.z.ai/api/paas/v4"
+): Promise<ConnectionTestResult> {
+  const startTime = Date.now();
+
+  try {
+    // Z.AI uses a simple chat completion test
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "glm-4.7-flash",
+        messages: [{ role: "user", content: "Hi" }],
+        max_tokens: 1,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    const latencyMs = Date.now() - startTime;
+
+    if (response.ok) {
+      return { success: true, latencyMs };
+    }
+
+    await response.text(); // Consume body
+    let errorMessage = `HTTP ${response.status}`;
+
+    if (response.status === 401) {
+      errorMessage = "Invalid API key - check your Z.AI dashboard";
+    } else if (response.status === 429) {
+      errorMessage = "Rate limited - quota exceeded";
+    } else if (response.status >= 500) {
+      errorMessage = "Z.AI server error - try again later";
+    }
+
+    return { success: false, latencyMs, error: errorMessage };
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+    let errorMessage = "Unknown error";
+
+    if (error instanceof Error) {
+      if (error.name === "AbortError" || error.message.includes("timeout")) {
+        errorMessage = "Connection timeout - server not responding";
+      } else if (error.message.includes("ECONNREFUSED")) {
+        errorMessage = "Connection refused - check Z.AI service status";
+      } else {
+        errorMessage = error.message;
+      }
+    }
+
+    return { success: false, latencyMs, error: errorMessage };
+  }
+}
+
+// Keep old name as alias for backwards compatibility
+export const testZhipuConnection = testZaiConnection;
 
 /**
  * Ollama model info

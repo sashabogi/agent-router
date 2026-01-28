@@ -1,8 +1,50 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Test coverage
 coverage/
+
+# Environment files (contain API keys!)
 .env
 .env.local
+.env.*.local
+
+# Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Argus snapshots
 .argus/
+
+# Backup files
+*.backup
+*.bak
+
+# TypeScript
+*.tsbuildinfo
+
+# Internal development files (not for public repo)
+CLAUDE.md
+PROGRESS.md
+TODO.md
+docs/PRD-AgentRouter.md
+docs/TDD-AgentRouter.md
+
+# Config with actual API keys (the template is fine)
+# User config is at ~/.config/agent-router/ anyway

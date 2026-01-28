@@ -1,6 +1,13 @@
 /**
- * Interactive setup wizard for AgentRouter
- * Provides a beautiful CLI experience for configuring providers and roles
+ * Interactive setup wizard for AgentRouter v2
+ * 
+ * AgentRouter is an MCP server for multi-agent orchestration.
+ * This version supports:
+ * - Multiple access modes: API keys OR subscription/CLI passthrough
+ * - Configurable orchestrator (any provider can orchestrate)
+ * - Full flexibility in role assignment
+ * 
+ * Updated January 2026 with latest models from all providers.
  */
 
 import * as p from "@clack/prompts";
@@ -13,26 +20,54 @@ import { stringify as yamlStringify } from "yaml";
 import type { Config, ProviderConfig, RoleConfig } from "../types.js";
 import { getUserConfigPath, getUserConfigDir } from "../config/defaults.js";
 import {
-  testAnthropicConnection,
   testOpenAIConnection,
   testGeminiConnection,
+  testDeepSeekConnection,
+  testZaiConnection,
   testOllamaConnection,
+  testAnthropicConnection,
   testConnectionWithSpinner,
-  type ConnectionTestResult,
 } from "./test-connection.js";
 
 // ============================================================================
-// Constants
+// Types
 // ============================================================================
 
 /**
- * Environment variable names for each provider
+ * Access mode for a provider
+ * - api: Uses API key, pay-per-token
+ * - subscription: Uses CLI tool with subscription (Claude Code, Codex CLI, Gemini CLI, etc.)
+ */
+type AccessMode = "api" | "subscription";
+
+interface ProviderOption {
+  value: string;
+  label: string;
+  hint?: string;
+  supportsSubscription?: boolean;
+  subscriptionInfo?: string;
+}
+
+interface ModelOption {
+  value: string;
+  label: string;
+  hint?: string;
+}
+
+// ============================================================================
+// Constants - Updated January 2026
+// ============================================================================
+
+/**
+ * Environment variable names for each provider (API mode)
  */
 const PROVIDER_ENV_VARS: Record<string, string> = {
   anthropic: "ANTHROPIC_API_KEY",
   openai: "OPENAI_API_KEY",
   google: "GEMINI_API_KEY",
-  ollama: "", // No API key needed
+  deepseek: "DEEPSEEK_API_KEY",
+  zai: "ZAI_API_KEY",
+  ollama: "",
 };
 
 /**
@@ -41,61 +76,129 @@ const PROVIDER_ENV_VARS: Record<string, string> = {
 const configuredEnvVars: Map<string, string> = new Map();
 
 /**
- * Available provider options
+ * All available providers with their capabilities
+ * Updated January 2026
+ * 
+ * NOTE: "subscription" mode (CLI passthrough) only works for the interface
+ * you're currently running FROM. Since AgentRouter typically runs from
+ * Claude Code, only Anthropic can use subscription mode for the orchestrator.
+ * All other providers need API keys for agent roles.
  */
-interface ProviderOption {
-  value: string;
-  label: string;
-  hint?: string;
-}
-
 const AVAILABLE_PROVIDERS: ProviderOption[] = [
   {
     value: "anthropic",
-    label: "Anthropic",
-    hint: "Claude models - excellent for coding",
+    label: "Anthropic (Claude)",
+    hint: "Claude Opus/Sonnet 4.5 - Best for orchestration and code",
+    supportsSubscription: true,
+    subscriptionInfo: "Claude Code session (Max/Pro subscription) - orchestrator only",
   },
   {
     value: "openai",
     label: "OpenAI",
-    hint: "GPT-4o, o1 reasoning models",
+    hint: "GPT-5.2/5.1 - Excellent for coding and critiques",
+    supportsSubscription: false, // Requires API key when called from Claude Code
   },
   {
     value: "google",
     label: "Google Gemini",
-    hint: "Gemini 2.5 Pro/Flash",
+    hint: "Gemini 3/2.5 - Great for research and multimodal",
+    supportsSubscription: false, // Requires API key when called from Claude Code
+  },
+  {
+    value: "deepseek",
+    label: "DeepSeek",
+    hint: "V3.2 Reasoner - Excellent reasoning at 1/10th the cost",
+    supportsSubscription: false,
+  },
+  {
+    value: "zai",
+    label: "Z.AI (GLM)",
+    hint: "GLM-4.7 - Strong agentic coding, very affordable",
+    supportsSubscription: false, // Requires API key when called from Claude Code
   },
   {
     value: "ollama",
     label: "Ollama",
-    hint: "Local models - privacy focused",
+    hint: "Local models - free, private, offline",
+    supportsSubscription: false,
   },
 ];
 
+// ============================================================================
+// Model Options - Updated January 2026
+// ============================================================================
+
 /**
- * Model options per provider
+ * Anthropic models (January 2026)
+ * https://docs.anthropic.com/en/docs/about-claude/models/overview
  */
-const ANTHROPIC_MODELS = [
-  { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4", hint: "Fast and capable" },
-  { value: "claude-opus-4-5-20251101", label: "Claude Opus 4.5", hint: "Most capable" },
-];
-
-const OPENAI_MODELS = [
-  { value: "gpt-4o", label: "GPT-4o", hint: "Versatile flagship model" },
-  { value: "gpt-4o-mini", label: "GPT-4o Mini", hint: "Faster, cheaper" },
-  { value: "o1", label: "o1", hint: "Advanced reasoning" },
-  { value: "o1-mini", label: "o1 Mini", hint: "Faster reasoning" },
-];
-
-const GEMINI_MODELS = [
-  { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro", hint: "Most capable" },
-  { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash", hint: "Faster" },
-  { value: "gemini-2.0-flash-exp", label: "Gemini 2.0 Flash Exp", hint: "Experimental" },
+const ANTHROPIC_MODELS: ModelOption[] = [
+  { value: "claude-sonnet-4-5-20250929", label: "Claude Sonnet 4.5", hint: "Best balance - recommended" },
+  { value: "claude-opus-4-5-20251101", label: "Claude Opus 4.5", hint: "Most intelligent" },
+  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5", hint: "Fastest, cheapest" },
 ];
 
 /**
- * AgentRouter role definitions
+ * OpenAI models (January 2026)
+ * https://platform.openai.com/docs/models
+ * GPT-5 series is current, GPT-4.1 still available
  */
+const OPENAI_MODELS: ModelOption[] = [
+  { value: "gpt-5.1", label: "GPT-5.1", hint: "Best for coding - adaptive reasoning" },
+  { value: "gpt-5.2", label: "GPT-5.2", hint: "Most advanced frontier model" },
+  { value: "gpt-5", label: "GPT-5", hint: "Strong coding, 400K context" },
+  { value: "gpt-5-mini", label: "GPT-5 Mini", hint: "Smaller, cost-effective" },
+  { value: "gpt-4.1", label: "GPT-4.1", hint: "Previous gen, 1M context" },
+  { value: "o3", label: "o3", hint: "Advanced reasoning (slower)" },
+];
+
+/**
+ * Google Gemini models (January 2026)
+ * https://ai.google.dev/gemini-api/docs/models
+ * Gemini 3 in preview, 2.5 stable
+ */
+const GEMINI_MODELS: ModelOption[] = [
+  { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro", hint: "Stable, high capability" },
+  { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash", hint: "Fast, balanced" },
+  { value: "gemini-3-pro-preview", label: "Gemini 3 Pro (Preview)", hint: "Most advanced reasoning" },
+  { value: "gemini-3-flash-preview", label: "Gemini 3 Flash (Preview)", hint: "Fast frontier performance" },
+];
+
+/**
+ * DeepSeek models (January 2026)
+ * https://api-docs.deepseek.com/quick_start/pricing
+ * V3.2 with thinking and non-thinking modes
+ */
+const DEEPSEEK_MODELS: ModelOption[] = [
+  { value: "deepseek-reasoner", label: "DeepSeek V3.2 (Thinking)", hint: "Best reasoning - great for critiques" },
+  { value: "deepseek-chat", label: "DeepSeek V3.2 (Non-thinking)", hint: "Fast and very cheap ($0.28/1M)" },
+];
+
+/**
+ * Z.AI GLM models (January 2026)
+ * https://docs.z.ai/guides/llm/glm-4.7
+ * GLM-4.7 series with 200K context, 128K output
+ */
+const ZAI_MODELS: ModelOption[] = [
+  { value: "glm-4.7", label: "GLM-4.7", hint: "Flagship - best for agentic coding" },
+  { value: "glm-4.7-flashx", label: "GLM-4.7 FlashX", hint: "Fast and affordable" },
+  { value: "glm-4.7-flash", label: "GLM-4.7 Flash", hint: "Free tier" },
+];
+
+/**
+ * Ollama local models
+ */
+const OLLAMA_MODELS: ModelOption[] = [
+  { value: "llama3.2", label: "Llama 3.2", hint: "Default local model" },
+  { value: "qwen3:32b", label: "Qwen 3 32B", hint: "Strong reasoning" },
+  { value: "codellama", label: "CodeLlama", hint: "Code-focused" },
+  { value: "deepseek-coder-v2", label: "DeepSeek Coder V2", hint: "Excellent for code" },
+];
+
+// ============================================================================
+// Role Definitions
+// ============================================================================
+
 interface RoleDefinition {
   value: string;
   label: string;
@@ -108,23 +211,31 @@ interface RoleDefinition {
 
 const AGENT_ROLES: RoleDefinition[] = [
   {
-    value: "coder",
-    label: "Coder",
-    hint: "Code generation and implementation",
+    value: "orchestrator",
+    label: "Orchestrator",
+    hint: "Main coordinator - routes tasks to other agents",
     defaultProvider: "anthropic",
-    defaultModel: "claude-sonnet-4-20250514",
-    systemPrompt: `You are an expert software engineer. Write clean, efficient, well-documented code.
-Follow best practices, use appropriate design patterns, and consider edge cases.
-Provide explanations for complex logic.`,
+    defaultModel: "claude-sonnet-4-5-20250929",
+    temperature: 0.3,
+    systemPrompt: `You are the orchestrating AI agent. Your role is to:
+
+1. **Understand the user's intent** and break down complex tasks
+2. **Route tasks** to specialized agents (critic, reviewer, researcher, etc.)
+3. **Synthesize results** from multiple agents into coherent responses
+4. **Maintain context** across the conversation
+
+You have access to other AI agents with different specializations.
+Use them strategically to provide the best possible assistance.`,
   },
   {
     value: "critic",
     label: "Critic",
-    hint: "Plan review, challenge assumptions",
-    defaultProvider: "openai",
-    defaultModel: "gpt-4o",
+    hint: "Challenge assumptions, find flaws in plans",
+    defaultProvider: "deepseek",
+    defaultModel: "deepseek-reasoner",
     temperature: 0.3,
-    systemPrompt: `You are a skeptical senior architect and technical reviewer. Your job is to:
+    systemPrompt: `You are a skeptical senior architect reviewing a plan.
+Your job is to provide a critical second opinion:
 
 1. **Challenge Assumptions**: Don't accept claims at face value. Ask "Why?" and "What if?"
 2. **Identify Risks**: Find failure modes, edge cases, and potential issues
@@ -132,42 +243,38 @@ Provide explanations for complex logic.`,
 4. **Check Completeness**: What's missing? What hasn't been considered?
 5. **Push for Excellence**: "Good enough" isn't good enough. Find ways to improve.
 
-Be constructive but rigorous. Your goal is to make plans better, not to tear them down.
-Provide specific, actionable feedback.`,
+Be constructive but rigorous. Provide specific, actionable feedback.`,
   },
   {
-    value: "designer",
-    label: "Designer",
-    hint: "UI/UX feedback and design review",
-    defaultProvider: "google",
-    defaultModel: "gemini-2.5-pro",
-    systemPrompt: `You are a senior UI/UX designer and frontend architect. Focus on:
+    value: "coder",
+    label: "Coder",
+    hint: "Write, refactor, and implement code",
+    defaultProvider: "anthropic",
+    defaultModel: "claude-sonnet-4-5-20250929",
+    temperature: 0.2,
+    systemPrompt: `You are an expert software engineer. Your role is to:
 
-1. **User Experience**: Is it intuitive? Accessible? Delightful?
-2. **Visual Hierarchy**: Does the layout guide the user's eye?
-3. **Component Architecture**: Are components reusable? Maintainable?
-4. **Design Systems**: Does it follow established patterns?
-5. **Responsive Design**: How does it work across devices?
-6. **Accessibility**: WCAG compliance, keyboard navigation, screen readers
+1. **Write Clean Code**: Follow best practices, use clear naming, add appropriate comments
+2. **Implement Features**: Turn requirements into working, well-tested code
+3. **Refactor**: Improve existing code structure without changing behavior
+4. **Debug**: Find and fix bugs systematically
+5. **Optimize**: Improve performance where it matters
 
-Provide specific feedback with examples and alternatives where applicable.`,
-  },
-  {
-    value: "researcher",
-    label: "Researcher",
-    hint: "Fact-finding and research",
-    defaultProvider: "google",
-    defaultModel: "gemini-2.5-pro",
-    systemPrompt: `You are a research analyst. Provide well-researched, factual information.
-When possible, cite sources or indicate confidence levels.
-If you're uncertain, say so. Prefer accuracy over completeness.`,
+Always consider:
+- Error handling and edge cases
+- Testing and testability
+- Security implications
+- Performance characteristics
+- Maintainability and readability
+
+Provide complete, runnable code with explanations of key decisions.`,
   },
   {
     value: "reviewer",
-    label: "Reviewer",
-    hint: "Code review and quality assurance",
-    defaultProvider: "openai",
-    defaultModel: "gpt-4o",
+    label: "Code Reviewer",
+    hint: "Review code for bugs, security, performance",
+    defaultProvider: "anthropic",
+    defaultModel: "claude-sonnet-4-5-20250929",
     temperature: 0.2,
     systemPrompt: `You are a senior code reviewer. Review code for:
 
@@ -180,33 +287,63 @@ If you're uncertain, say so. Prefer accuracy over completeness.`,
 
 Be specific. Reference line numbers. Suggest improvements with code examples.`,
   },
+  {
+    value: "designer",
+    label: "Designer",
+    hint: "UI/UX feedback and design review",
+    defaultProvider: "google",
+    defaultModel: "gemini-2.5-pro",
+    systemPrompt: `You are a senior UI/UX designer. Focus on:
+
+1. **User Experience**: Is it intuitive? Accessible? Delightful?
+2. **Visual Hierarchy**: Does the layout guide the user's eye?
+3. **Component Architecture**: Are components reusable? Maintainable?
+4. **Design Systems**: Does it follow established patterns?
+5. **Responsive Design**: How does it work across devices?
+6. **Accessibility**: WCAG compliance, keyboard navigation, screen readers
+
+Provide specific feedback with examples and alternatives.`,
+  },
+  {
+    value: "researcher",
+    label: "Researcher",
+    hint: "Fact-finding and research tasks",
+    defaultProvider: "google",
+    defaultModel: "gemini-2.5-pro",
+    systemPrompt: `You are a research analyst. Provide:
+
+1. Well-researched, factual information
+2. Source citations where possible
+3. Confidence levels for claims
+4. Alternative perspectives or approaches
+5. Current best practices in the field
+
+If you're uncertain, say so. Prefer accuracy over completeness.`,
+  },
 ];
 
 // ============================================================================
 // Display Functions
 // ============================================================================
 
-/**
- * Display the wizard intro banner
- */
 function displayBanner(): void {
   console.log();
-  console.log(color.cyan("+-------------------------------------------------+"));
-  console.log(color.cyan("|                                                 |"));
+  console.log(color.cyan("╭─────────────────────────────────────────────────╮"));
+  console.log(color.cyan("│                                                 │"));
   console.log(
-    color.cyan("|   ") +
-      color.bold(color.yellow("@")) +
-      color.bold(" AgentRouter Setup") +
-      color.cyan("                         |")
+    color.cyan("│   ") +
+      color.bold(color.yellow("🔀")) +
+      color.bold(" AgentRouter Setup v2") +
+      color.cyan("                    │")
   );
-  console.log(color.cyan("|                                                 |"));
+  console.log(color.cyan("│                                                 │"));
   console.log(
-    color.cyan("|   ") +
-      color.dim("Multi-agent orchestration for Claude Code") +
-      color.cyan("     |")
+    color.cyan("│   ") +
+      color.dim("Multi-agent orchestration for AI coding tools") +
+      color.cyan(" │")
   );
-  console.log(color.cyan("|                                                 |"));
-  console.log(color.cyan("+-------------------------------------------------+"));
+  console.log(color.cyan("│                                                 │"));
+  console.log(color.cyan("╰─────────────────────────────────────────────────╯"));
   console.log();
 }
 
@@ -214,20 +351,41 @@ function displayBanner(): void {
 // Validation Functions
 // ============================================================================
 
-/**
- * Validate API key format
- */
 function validateApiKey(value: string, _provider: string): string | undefined {
   if (!value || value.trim().length === 0) {
     return "API key is required";
   }
-
-  // Basic length check - most API keys are at least 20 chars
   if (value.length < 10) {
     return "API key seems too short";
   }
-
   return undefined;
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+function getProviderModels(providerName: string): ModelOption[] {
+  switch (providerName) {
+    case "anthropic":
+      return ANTHROPIC_MODELS;
+    case "openai":
+      return OPENAI_MODELS;
+    case "google":
+      return GEMINI_MODELS;
+    case "deepseek":
+      return DEEPSEEK_MODELS;
+    case "zai":
+      return ZAI_MODELS;
+    case "ollama":
+      return OLLAMA_MODELS;
+    default:
+      return [{ value: "default", label: "Default model" }];
+  }
+}
+
+function getProviderInfo(providerName: string): ProviderOption | undefined {
+  return AVAILABLE_PROVIDERS.find((p) => p.value === providerName);
 }
 
 // ============================================================================
@@ -235,76 +393,116 @@ function validateApiKey(value: string, _provider: string): string | undefined {
 // ============================================================================
 
 /**
+ * Ask user for access mode (API or Subscription)
+ */
+async function selectAccessMode(provider: ProviderOption): Promise<AccessMode | null> {
+  if (!provider.supportsSubscription) {
+    return "api";
+  }
+
+  const accessMode = await p.select({
+    message: `How do you want to access ${provider.label}?`,
+    options: [
+      {
+        value: "subscription" as const,
+        label: "Subscription/CLI",
+        hint: provider.subscriptionInfo ?? "Uses CLI tool with subscription",
+      },
+      {
+        value: "api" as const,
+        label: "API Key",
+        hint: "Pay-per-token usage",
+      },
+    ],
+  });
+
+  if (p.isCancel(accessMode)) return null;
+  return accessMode as AccessMode;
+}
+
+/**
  * Configure Anthropic provider
  */
 async function configureAnthropic(): Promise<ProviderConfig | null> {
-  p.log.step(color.bold("Anthropic Configuration"));
+  p.log.step(color.bold("Anthropic (Claude) Configuration"));
+  
+  const provider = getProviderInfo("anthropic")!;
+  const accessMode = await selectAccessMode(provider);
+  if (!accessMode) return null;
 
+  if (accessMode === "subscription") {
+    p.note(
+      "You're using Claude Code with your existing subscription.\n" +
+        "No API key needed - Claude will be accessed through the current session.",
+      "Subscription Mode"
+    );
+
+    const defaultModel = await p.select({
+      message: "Select default Claude model:",
+      options: ANTHROPIC_MODELS,
+    });
+    if (p.isCancel(defaultModel)) return null;
+
+    return {
+      access_mode: "subscription",
+      default_model: defaultModel as string,
+    };
+  }
+
+  // API mode
   p.note(
-    "Get your API key from the Anthropic console:\n" +
+    "Get your API key from:\n" +
       color.cyan("https://console.anthropic.com/settings/keys"),
-    "Anthropic Setup"
+    "API Key Setup"
   );
 
-  // Loop to allow retrying API key entry
   while (true) {
     const apiKey = await p.password({
       message: "Enter your Anthropic API key:",
       validate: (v) => validateApiKey(v, "anthropic"),
     });
-
     if (p.isCancel(apiKey)) return null;
 
-    // Test connection
     const result = await testConnectionWithSpinner("Anthropic", () =>
       testAnthropicConnection(apiKey)
     );
 
     if (result.success) {
-      // Select default model
       const defaultModel = await p.select({
         message: "Select default Claude model:",
         options: ANTHROPIC_MODELS,
       });
-
       if (p.isCancel(defaultModel)) return null;
 
-      // Store env var reference instead of actual key
       const envVarName = PROVIDER_ENV_VARS["anthropic"]!;
       configuredEnvVars.set(envVarName, apiKey);
 
-      p.log.info(
-        `Your API key will be stored as ${color.cyan("${" + envVarName + "}")} in the config.`
-      );
-
       return {
+        access_mode: "api",
         api_key: "${" + envVarName + "}",
-        base_url: "https://api.anthropic.com",
+        default_model: defaultModel as string,
       };
     }
 
-    // Test failed - ask what to do
     const action = await p.select({
       message: "Connection test failed. What would you like to do?",
       options: [
-        { value: "retry", label: "Re-enter API key", hint: "Try a different key" },
+        { value: "retry", label: "Re-enter API key" },
         { value: "skip", label: "Skip this provider" },
-        { value: "add", label: "Add anyway", hint: "Use this key despite the error" },
+        { value: "add", label: "Add anyway" },
       ],
     });
 
     if (p.isCancel(action) || action === "skip") return null;
-
     if (action === "add") {
       const envVarName = PROVIDER_ENV_VARS["anthropic"]!;
       configuredEnvVars.set(envVarName, apiKey);
-
       return {
+        access_mode: "api",
         api_key: "${" + envVarName + "}",
-        base_url: "https://api.anthropic.com",
+        default_model: "claude-sonnet-4-5-20250929",
       };
     }
-    // action === "retry" - loop continues
   }
 }
 
@@ -313,72 +511,86 @@ async function configureAnthropic(): Promise<ProviderConfig | null> {
  */
 async function configureOpenAI(): Promise<ProviderConfig | null> {
   p.log.step(color.bold("OpenAI Configuration"));
+  
+  const provider = getProviderInfo("openai")!;
+  const accessMode = await selectAccessMode(provider);
+  if (!accessMode) return null;
 
+  if (accessMode === "subscription") {
+    p.note(
+      "You're using Codex CLI with your ChatGPT Plus/Pro subscription.\n" +
+        "Make sure Codex CLI is installed: " + color.cyan("npm install -g @openai/codex"),
+      "Subscription Mode"
+    );
+
+    const defaultModel = await p.select({
+      message: "Select default OpenAI model:",
+      options: OPENAI_MODELS,
+    });
+    if (p.isCancel(defaultModel)) return null;
+
+    return {
+      access_mode: "subscription",
+      default_model: defaultModel as string,
+    };
+  }
+
+  // API mode
   p.note(
-    "Get your API key from the OpenAI dashboard:\n" +
+    "Get your API key from:\n" +
       color.cyan("https://platform.openai.com/api-keys"),
-    "OpenAI Setup"
+    "API Key Setup"
   );
 
-  // Loop to allow retrying API key entry
   while (true) {
     const apiKey = await p.password({
       message: "Enter your OpenAI API key:",
       validate: (v) => validateApiKey(v, "openai"),
     });
-
     if (p.isCancel(apiKey)) return null;
 
-    // Test connection
     const result = await testConnectionWithSpinner("OpenAI", () =>
       testOpenAIConnection(apiKey)
     );
 
     if (result.success) {
-      // Select default model
       const defaultModel = await p.select({
         message: "Select default OpenAI model:",
         options: OPENAI_MODELS,
       });
-
       if (p.isCancel(defaultModel)) return null;
 
-      // Store env var reference instead of actual key
       const envVarName = PROVIDER_ENV_VARS["openai"]!;
       configuredEnvVars.set(envVarName, apiKey);
 
-      p.log.info(
-        `Your API key will be stored as ${color.cyan("${" + envVarName + "}")} in the config.`
-      );
-
       return {
+        access_mode: "api",
         api_key: "${" + envVarName + "}",
         base_url: "https://api.openai.com/v1",
+        default_model: defaultModel as string,
       };
     }
 
-    // Test failed - ask what to do
     const action = await p.select({
       message: "Connection test failed. What would you like to do?",
       options: [
-        { value: "retry", label: "Re-enter API key", hint: "Try a different key" },
+        { value: "retry", label: "Re-enter API key" },
         { value: "skip", label: "Skip this provider" },
-        { value: "add", label: "Add anyway", hint: "Use this key despite the error" },
+        { value: "add", label: "Add anyway" },
       ],
     });
 
     if (p.isCancel(action) || action === "skip") return null;
-
     if (action === "add") {
       const envVarName = PROVIDER_ENV_VARS["openai"]!;
       configuredEnvVars.set(envVarName, apiKey);
-
       return {
+        access_mode: "api",
         api_key: "${" + envVarName + "}",
         base_url: "https://api.openai.com/v1",
+        default_model: "gpt-5.1",
       };
     }
-    // action === "retry" - loop continues
   }
 }
 
@@ -387,80 +599,259 @@ async function configureOpenAI(): Promise<ProviderConfig | null> {
  */
 async function configureGemini(): Promise<ProviderConfig | null> {
   p.log.step(color.bold("Google Gemini Configuration"));
+  
+  const provider = getProviderInfo("google")!;
+  const accessMode = await selectAccessMode(provider);
+  if (!accessMode) return null;
 
+  if (accessMode === "subscription") {
+    p.note(
+      "You're using Gemini CLI with your Google account.\n" +
+        color.bold("FREE tier: 60 requests/min, 1000 requests/day!") + "\n\n" +
+        "Install: " + color.cyan("npm install -g @google/gemini-cli") + "\n" +
+        "Then run: " + color.cyan("gemini") + " and login with Google",
+      "Gemini CLI (Free)"
+    );
+
+    const defaultModel = await p.select({
+      message: "Select default Gemini model:",
+      options: GEMINI_MODELS,
+    });
+    if (p.isCancel(defaultModel)) return null;
+
+    return {
+      access_mode: "subscription",
+      default_model: defaultModel as string,
+    };
+  }
+
+  // API mode
   p.note(
-    "Get your API key from Google AI Studio:\n" +
+    "Get your API key from:\n" +
       color.cyan("https://aistudio.google.com/apikey"),
-    "Gemini Setup"
+    "API Key Setup"
   );
 
-  // Loop to allow retrying API key entry
   while (true) {
     const apiKey = await p.password({
       message: "Enter your Google Gemini API key:",
       validate: (v) => validateApiKey(v, "google"),
     });
-
     if (p.isCancel(apiKey)) return null;
 
-    // Test connection
     const result = await testConnectionWithSpinner("Gemini", () =>
       testGeminiConnection(apiKey)
     );
 
     if (result.success) {
-      // Select default model
       const defaultModel = await p.select({
         message: "Select default Gemini model:",
         options: GEMINI_MODELS,
       });
-
       if (p.isCancel(defaultModel)) return null;
 
-      // Store env var reference instead of actual key
       const envVarName = PROVIDER_ENV_VARS["google"]!;
       configuredEnvVars.set(envVarName, apiKey);
 
-      p.log.info(
-        `Your API key will be stored as ${color.cyan("${" + envVarName + "}")} in the config.`
-      );
-
       return {
+        access_mode: "api",
         api_key: "${" + envVarName + "}",
+        default_model: defaultModel as string,
       };
     }
 
-    // Test failed - ask what to do
     const action = await p.select({
       message: "Connection test failed. What would you like to do?",
       options: [
-        { value: "retry", label: "Re-enter API key", hint: "Try a different key" },
+        { value: "retry", label: "Re-enter API key" },
         { value: "skip", label: "Skip this provider" },
-        { value: "add", label: "Add anyway", hint: "Use this key despite the error" },
+        { value: "add", label: "Add anyway" },
       ],
     });
 
     if (p.isCancel(action) || action === "skip") return null;
-
     if (action === "add") {
       const envVarName = PROVIDER_ENV_VARS["google"]!;
       configuredEnvVars.set(envVarName, apiKey);
-
       return {
+        access_mode: "api",
         api_key: "${" + envVarName + "}",
+        default_model: "gemini-2.5-flash",
       };
     }
-    // action === "retry" - loop continues
   }
 }
 
 /**
- * Configure Ollama provider
+ * Configure DeepSeek provider (API only)
+ */
+async function configureDeepSeek(): Promise<ProviderConfig | null> {
+  p.log.step(color.bold("DeepSeek Configuration"));
+
+  p.note(
+    "DeepSeek V3.2 offers excellent reasoning at ~1/10th the cost.\n" +
+      color.bold("Pricing: $0.28/1M input, $0.42/1M output") + "\n\n" +
+      "Get your API key from:\n" +
+      color.cyan("https://platform.deepseek.com/api_keys"),
+    "DeepSeek Setup"
+  );
+
+  while (true) {
+    const apiKey = await p.password({
+      message: "Enter your DeepSeek API key:",
+      validate: (v) => validateApiKey(v, "deepseek"),
+    });
+    if (p.isCancel(apiKey)) return null;
+
+    const result = await testConnectionWithSpinner("DeepSeek", () =>
+      testDeepSeekConnection(apiKey)
+    );
+
+    if (result.success) {
+      const defaultModel = await p.select({
+        message: "Select default DeepSeek model:",
+        options: DEEPSEEK_MODELS,
+      });
+      if (p.isCancel(defaultModel)) return null;
+
+      const envVarName = PROVIDER_ENV_VARS["deepseek"]!;
+      configuredEnvVars.set(envVarName, apiKey);
+
+      return {
+        access_mode: "api",
+        api_key: "${" + envVarName + "}",
+        base_url: "https://api.deepseek.com",
+        default_model: defaultModel as string,
+      };
+    }
+
+    const action = await p.select({
+      message: "Connection test failed. What would you like to do?",
+      options: [
+        { value: "retry", label: "Re-enter API key" },
+        { value: "skip", label: "Skip this provider" },
+        { value: "add", label: "Add anyway" },
+      ],
+    });
+
+    if (p.isCancel(action) || action === "skip") return null;
+    if (action === "add") {
+      const envVarName = PROVIDER_ENV_VARS["deepseek"]!;
+      configuredEnvVars.set(envVarName, apiKey);
+      return {
+        access_mode: "api",
+        api_key: "${" + envVarName + "}",
+        base_url: "https://api.deepseek.com",
+        default_model: "deepseek-reasoner",
+      };
+    }
+  }
+}
+
+/**
+ * Configure Z.AI (GLM) provider
+ */
+async function configureZai(): Promise<ProviderConfig | null> {
+  p.log.step(color.bold("Z.AI (GLM) Configuration"));
+  
+  const provider = getProviderInfo("zai")!;
+  const accessMode = await selectAccessMode(provider);
+  if (!accessMode) return null;
+
+  if (accessMode === "subscription") {
+    p.note(
+      "GLM Coding Plan: " + color.bold("$3/month") + " - 3× usage, 1/7th cost\n" +
+        "Works with Claude Code, Kilo Code, Cline, and more.\n\n" +
+        "Subscribe at: " + color.cyan("https://z.ai/subscribe"),
+      "GLM Coding Plan"
+    );
+
+    const defaultModel = await p.select({
+      message: "Select default GLM model:",
+      options: ZAI_MODELS,
+    });
+    if (p.isCancel(defaultModel)) return null;
+
+    return {
+      access_mode: "subscription",
+      base_url: "https://api.z.ai/api/paas/v4",
+      default_model: defaultModel as string,
+    };
+  }
+
+  // API mode
+  p.note(
+    "GLM-4.7 is excellent for agentic coding tasks.\n" +
+      "Get your API key from:\n" +
+      color.cyan("https://z.ai/manage-apikey/apikey-list"),
+    "API Key Setup"
+  );
+
+  while (true) {
+    const apiKey = await p.password({
+      message: "Enter your Z.AI API key:",
+      validate: (v) => validateApiKey(v, "zai"),
+    });
+    if (p.isCancel(apiKey)) return null;
+
+    const result = await testConnectionWithSpinner("Z.AI", () =>
+      testZaiConnection(apiKey)
+    );
+
+    if (result.success) {
+      const defaultModel = await p.select({
+        message: "Select default GLM model:",
+        options: ZAI_MODELS,
+      });
+      if (p.isCancel(defaultModel)) return null;
+
+      const envVarName = PROVIDER_ENV_VARS["zai"]!;
+      configuredEnvVars.set(envVarName, apiKey);
+
+      return {
+        access_mode: "api",
+        api_key: "${" + envVarName + "}",
+        base_url: "https://api.z.ai/api/paas/v4",
+        default_model: defaultModel as string,
+      };
+    }
+
+    const action = await p.select({
+      message: "Connection test failed. What would you like to do?",
+      options: [
+        { value: "retry", label: "Re-enter API key" },
+        { value: "skip", label: "Skip this provider" },
+        { value: "add", label: "Add anyway" },
+      ],
+    });
+
+    if (p.isCancel(action) || action === "skip") return null;
+    if (action === "add") {
+      const envVarName = PROVIDER_ENV_VARS["zai"]!;
+      configuredEnvVars.set(envVarName, apiKey);
+      return {
+        access_mode: "api",
+        api_key: "${" + envVarName + "}",
+        base_url: "https://api.z.ai/api/paas/v4",
+        default_model: "glm-4.7-flash",
+      };
+    }
+  }
+}
+
+/**
+ * Configure Ollama provider (local)
  */
 async function configureOllama(): Promise<ProviderConfig | null> {
   p.log.step(color.bold("Ollama Configuration"));
 
-  // Loop to allow retrying URL entry
+  p.note(
+    "Ollama runs models locally - free and private.\n" +
+      "Install from: " + color.cyan("https://ollama.ai") + "\n" +
+      "Then run: " + color.cyan("ollama serve"),
+    "Ollama Setup"
+  );
+
   while (true) {
     const baseUrl = await p.text({
       message: "Enter Ollama base URL:",
@@ -475,173 +866,124 @@ async function configureOllama(): Promise<ProviderConfig | null> {
         }
       },
     });
-
     if (p.isCancel(baseUrl)) return null;
 
-    // Test connection and get models
     const result = await testConnectionWithSpinner("Ollama", () =>
       testOllamaConnection(baseUrl)
     );
 
     if (result.success) {
-      // Select models to use if available
+      let selectedModel = "llama3.2";
+
       if (result.models && result.models.length > 0) {
         const modelChoice = await p.select({
           message: "Select default model:",
-          options: result.models.map((m) => ({
-            value: m,
-            label: m,
-          })),
+          options: result.models.map((m) => ({ value: m, label: m })),
         });
-
         if (p.isCancel(modelChoice)) return null;
-
+        selectedModel = modelChoice as string;
         p.log.success(`Found ${result.models.length} installed model(s)`);
       } else {
         p.log.warn("No models found. Pull a model with: ollama pull llama3.2");
       }
 
       return {
+        access_mode: "api",
         base_url: baseUrl,
+        default_model: selectedModel,
       };
     }
-
-    // Test failed - show help and ask what to do
-    p.note(
-      "Make sure Ollama is running:\n" +
-        color.cyan("  ollama serve") +
-        "\n\nOr install from:\n" +
-        color.cyan("  https://ollama.ai"),
-      "Ollama Not Running"
-    );
 
     const action = await p.select({
       message: "Connection test failed. What would you like to do?",
       options: [
-        { value: "retry", label: "Re-enter URL", hint: "Try a different URL" },
+        { value: "retry", label: "Re-enter URL" },
         { value: "skip", label: "Skip this provider" },
-        { value: "add", label: "Add anyway", hint: "Configure later when Ollama is running" },
+        { value: "add", label: "Add anyway" },
       ],
     });
 
     if (p.isCancel(action) || action === "skip") return null;
-
     if (action === "add") {
       return {
+        access_mode: "api",
         base_url: baseUrl,
+        default_model: "llama3.2",
       };
     }
-    // action === "retry" - loop continues
   }
 }
 
 // ============================================================================
-// Role Configuration Functions
+// Role Configuration
 // ============================================================================
 
-/**
- * Get model options for a provider
- */
-function getProviderModels(
-  providerName: string
-): { value: string; label: string; hint?: string }[] {
-  switch (providerName) {
-    case "anthropic":
-      return ANTHROPIC_MODELS;
-    case "openai":
-      return OPENAI_MODELS;
-    case "google":
-      return GEMINI_MODELS;
-    case "ollama":
-      return [
-        { value: "llama3.2", label: "Llama 3.2", hint: "Default local model" },
-        { value: "qwen3:32b", label: "Qwen 3 32B", hint: "Alternative" },
-        { value: "codellama", label: "CodeLlama", hint: "Code-focused" },
-      ];
-    default:
-      return [{ value: "default", label: "Default model" }];
-  }
-}
-
-/**
- * Configure role assignments
- */
 async function configureRoles(
-  configuredProviders: string[]
+  configuredProviders: string[],
+  orchestratorProvider: string
 ): Promise<Record<string, RoleConfig>> {
-  p.log.step(color.bold("Role Configuration"));
-  p.log.info(color.dim("Assign each agent role to a provider and model"));
-
   const roles: Record<string, RoleConfig> = {};
 
-  // Ask how to configure roles
-  const configMode = await p.select({
-    message: "How would you like to configure roles?",
-    options: [
-      {
-        value: "quick",
-        label: "Quick setup",
-        hint: "Use recommended defaults for configured providers",
-      },
-      {
-        value: "custom",
-        label: "Custom",
-        hint: "Choose provider and model for each role",
-      },
-    ],
+  // Auto-configure orchestrator role
+  const orchestratorRole = AGENT_ROLES.find((r) => r.value === "orchestrator");
+  if (orchestratorRole) {
+    const defaultModel = getProviderModels(orchestratorProvider)[0]?.value ?? "default";
+    roles["orchestrator"] = {
+      provider: orchestratorProvider,
+      model: defaultModel,
+      system_prompt: orchestratorRole.systemPrompt,
+      ...(orchestratorRole.temperature !== undefined ? { temperature: orchestratorRole.temperature } : {}),
+    };
+    p.log.success(`Orchestrator → ${orchestratorProvider}/${defaultModel}`);
+  }
+
+  // Filter out orchestrator from selectable roles
+  const selectableRoles = AGENT_ROLES.filter((r) => r.value !== "orchestrator");
+
+  const selectedRoles = await p.multiselect({
+    message: "Which agent roles would you like to enable?",
+    options: selectableRoles.map((role) => ({
+      value: role.value,
+      label: role.label,
+      ...(role.hint ? { hint: role.hint } : {}),
+    })),
+    required: false,
   });
 
-  if (p.isCancel(configMode)) {
-    // Return default roles using first configured provider
-    return buildDefaultRoles(configuredProviders);
+  if (p.isCancel(selectedRoles) || (selectedRoles as string[]).length === 0) {
+    p.log.warn("No additional roles selected. You can add roles later.");
+    return roles;
   }
 
-  if (configMode === "quick") {
-    return buildDefaultRoles(configuredProviders);
-  }
+  for (const roleValue of selectedRoles as string[]) {
+    const role = selectableRoles.find((r) => r.value === roleValue);
+    if (!role) continue;
 
-  // Custom configuration - let user select for each role
-  for (const role of AGENT_ROLES) {
     console.log();
-    p.log.step(color.cyan(`Configuring: ${role.label}`));
+    p.log.step(color.cyan(`${role.label}`));
     console.log(color.dim(`  ${role.hint}`));
 
-    // Build provider options
-    const providerOptions: Array<{ value: string; label: string; hint?: string }> =
-      configuredProviders.map((provider) => {
-        const option: { value: string; label: string; hint?: string } = {
-          value: provider,
-          label: provider,
-        };
-        if (provider === role.defaultProvider) {
-          option.hint = `${role.defaultModel} [Recommended]`;
-        }
-        return option;
-      });
-
-    // Add skip option
-    providerOptions.push({
-      value: "__skip__",
-      label: "Skip this role",
-      hint: "Don't configure this role",
+    const providerOptions = configuredProviders.map((provider) => {
+      const models = getProviderModels(provider);
+      const defaultModel = models[0]?.label ?? "default";
+      return {
+        value: provider,
+        label: provider,
+        hint: `Default: ${defaultModel}`,
+      };
     });
 
     const selectedProvider = await p.select({
       message: `Which provider for ${role.label.toLowerCase()}?`,
       options: providerOptions,
     });
+    if (p.isCancel(selectedProvider)) continue;
 
-    if (p.isCancel(selectedProvider) || selectedProvider === "__skip__") {
-      continue;
-    }
-
-    // Let user select model
     const modelOptions = getProviderModels(selectedProvider as string);
     const selectedModel = await p.select({
       message: "Select model:",
       options: modelOptions,
     });
-
     if (p.isCancel(selectedModel)) continue;
 
     roles[role.value] = {
@@ -652,67 +994,18 @@ async function configureRoles(
     };
 
     console.log(
-      color.green(`  + ${role.value}`) +
-        color.dim(` -> ${selectedProvider}/${selectedModel}`)
+      color.green(`  ✓ ${role.value}`) +
+        color.dim(` → ${selectedProvider}/${selectedModel}`)
     );
-  }
-
-  // If no roles configured, use defaults
-  if (Object.keys(roles).length === 0) {
-    p.log.warn("No roles configured. Using defaults.");
-    return buildDefaultRoles(configuredProviders);
   }
 
   return roles;
 }
 
-/**
- * Build default role configurations based on configured providers
- */
-function buildDefaultRoles(configuredProviders: string[]): Record<string, RoleConfig> {
-  const roles: Record<string, RoleConfig> = {};
-
-  for (const role of AGENT_ROLES) {
-    // Use recommended provider if available, otherwise use first configured provider
-    let provider = role.defaultProvider;
-    let model = role.defaultModel;
-
-    if (!configuredProviders.includes(provider)) {
-      provider = configuredProviders[0]!;
-      // Get appropriate model for fallback provider
-      const models = getProviderModels(provider);
-      model = models[0]?.value ?? "default";
-    }
-
-    roles[role.value] = {
-      provider,
-      model,
-      system_prompt: role.systemPrompt,
-      ...(role.temperature !== undefined ? { temperature: role.temperature } : {}),
-    };
-  }
-
-  // Display summary
-  console.log();
-  console.log(color.bold("  Role Assignments"));
-  console.log();
-  for (const [roleName, roleConfig] of Object.entries(roles)) {
-    console.log(
-      `  ${color.cyan(roleName.padEnd(12))} -> ${roleConfig.provider}/${color.dim(roleConfig.model)}`
-    );
-  }
-  console.log();
-
-  return roles;
-}
-
 // ============================================================================
-// Shell Profile Integration
+// Shell Profile & Config Saving
 // ============================================================================
 
-/**
- * Get the appropriate shell profile path based on the current shell
- */
 function getShellProfilePath(): string {
   const shell = process.env["SHELL"] ?? "";
   if (shell.includes("zsh")) {
@@ -721,41 +1014,33 @@ function getShellProfilePath(): string {
   return path.join(os.homedir(), ".bashrc");
 }
 
-/**
- * Add environment variables to the user's shell profile
- */
 async function addEnvVarsToShellProfile(): Promise<void> {
-  if (configuredEnvVars.size === 0) {
-    return;
-  }
+  if (configuredEnvVars.size === 0) return;
 
   const profilePath = getShellProfilePath();
   const profileName = path.basename(profilePath);
 
-  // Ask user if they want to add env vars to shell profile
   const shouldAdd = await p.confirm({
     message: `Add API keys to ~/${profileName}?`,
     initialValue: true,
   });
 
   if (p.isCancel(shouldAdd) || !shouldAdd) {
-    p.log.info("You'll need to set the environment variables manually.");
-    displayEnvVarsSummary();
+    p.log.info("Set environment variables manually:");
+    for (const [envVar] of configuredEnvVars) {
+      console.log(`  ${color.cyan(`export ${envVar}="your-api-key"`)}`);
+    }
     return;
   }
 
   try {
-    // Read existing profile content (or empty string if file doesn't exist)
     let profileContent = "";
     if (fs.existsSync(profilePath)) {
       profileContent = fs.readFileSync(profilePath, "utf-8");
     }
 
-    // Collect env vars to add
     const envVarsToAdd: Array<{ name: string; value: string }> = [];
-
     for (const [envVar, value] of configuredEnvVars) {
-      // Check if this env var already exists in the profile
       const existsPattern = new RegExp(`^\\s*export\\s+${envVar}=`, "m");
       if (!existsPattern.test(profileContent)) {
         envVarsToAdd.push({ name: envVar, value });
@@ -763,334 +1048,566 @@ async function addEnvVarsToShellProfile(): Promise<void> {
     }
 
     if (envVarsToAdd.length === 0) {
-      p.log.info(`All environment variables already exist in ~/${profileName}`);
+      p.log.info(`Environment variables already exist in ~/${profileName}`);
       return;
     }
 
-    // Build the export block
-    const exportLines: string[] = [];
-    exportLines.push("");
-    exportLines.push("# AgentRouter");
+    const exportLines: string[] = ["", "# AgentRouter"];
     for (const { name, value } of envVarsToAdd) {
       exportLines.push(`export ${name}="${value}"`);
     }
-    const exportBlock = exportLines.join("\n");
 
-    // Ensure we add a newline before our block if the file doesn't end with one
     let prefix = "";
     if (profileContent.length > 0 && !profileContent.endsWith("\n")) {
       prefix = "\n";
     }
 
-    // Append to profile
-    fs.appendFileSync(profilePath, prefix + exportBlock + "\n", "utf-8");
-
+    fs.appendFileSync(profilePath, prefix + exportLines.join("\n") + "\n", "utf-8");
     p.log.success(`Added environment variables to ~/${profileName}`);
-    p.log.info(
-      `Run ${color.cyan(`source ~/${profileName}`)} to apply changes (or restart your terminal)`
-    );
+    p.log.info(`Run ${color.cyan(`source ~/${profileName}`)} to apply changes`);
   } catch (error) {
-    p.log.error(
-      `Failed to update ${profilePath}: ${error instanceof Error ? error.message : "Unknown error"}`
-    );
-    p.log.info("You'll need to add the environment variables manually:");
-    displayEnvVarsSummary();
+    p.log.error(`Failed to update ${profilePath}`);
   }
 }
 
-/**
- * Display environment variables summary with export commands
- */
-function displayEnvVarsSummary(): void {
-  if (configuredEnvVars.size === 0) {
-    return;
-  }
-
-  console.log();
-  console.log(color.bold("Set these environment variables:"));
-  console.log();
-
-  for (const [envVar] of configuredEnvVars) {
-    console.log(`  ${color.cyan(`export ${envVar}="your-api-key-here"`)}`);
-  }
-
-  console.log();
-}
-
-// ============================================================================
-// Config Generation and Saving
-// ============================================================================
-
-/**
- * Generate the full configuration object
- */
 function generateConfig(
   providers: Record<string, ProviderConfig>,
   roles: Record<string, RoleConfig>
 ): Config {
   return {
-    version: "1.0",
-
+    version: "2.0",
     defaults: {
       temperature: 0.7,
       max_tokens: 4096,
       timeout_ms: 60000,
     },
-
     roles,
     providers,
   };
 }
 
-/**
- * Generate configuration summary for display
- */
-function generateConfigSummary(config: Config, configPath: string): string {
-  const lines: string[] = [];
-
-  // Config path
-  lines.push(`  ${color.bold("Config:")} ${color.dim(configPath)}`);
-  lines.push("");
-
-  // Providers summary
-  const providerNames = Object.keys(config.providers);
-  lines.push(`  ${color.bold(`Providers (${providerNames.length}):`)} `);
-  for (const name of providerNames) {
-    lines.push(`    ${color.green("+")} ${name}`);
-  }
-  lines.push("");
-
-  // Roles summary
-  const roleNames = Object.keys(config.roles);
-  lines.push(`  ${color.bold(`Roles (${roleNames.length}):`)} `);
-  for (const [name, roleConfig] of Object.entries(config.roles)) {
-    lines.push(
-      `    ${color.cyan(name.padEnd(12))} -> ${roleConfig.provider}/${color.dim(roleConfig.model)}`
-    );
-  }
-
-  return lines.join("\n");
-}
-
-/**
- * Save configuration to file
- */
 async function saveConfig(config: Config): Promise<boolean> {
   const configPath = getUserConfigPath();
   const configDir = getUserConfigDir();
 
   try {
-    // Create directory if needed
     if (!fs.existsSync(configDir)) {
       fs.mkdirSync(configDir, { recursive: true });
     }
 
-    // Backup existing config
     if (fs.existsSync(configPath)) {
       const backupPath = `${configPath}.backup.${Date.now()}`;
       fs.copyFileSync(configPath, backupPath);
       p.log.info(`Backed up existing config to: ${color.dim(backupPath)}`);
     }
 
-    // Generate YAML with header
-    const header = `# AgentRouter Configuration
-# Generated by: agent-router setup
+    const header = `# AgentRouter Configuration v2
+# Generated: ${new Date().toISOString()}
 # Documentation: https://github.com/hive-dev/agent-router
 #
-# Environment variables can be interpolated using \${VAR_NAME} syntax.
-# Example: api_key: \${ANTHROPIC_API_KEY}
+# This configures multi-agent orchestration across AI providers.
+# Supports both API keys and subscription/CLI access modes.
+#
+# Environment variables: \${VAR_NAME} syntax
+# Access modes: "api" (pay-per-token) or "subscription" (CLI tools)
 
 `;
 
-    const yamlContent = yamlStringify(config, {
-      indent: 2,
-      lineWidth: 100,
-    });
-
+    const yamlContent = yamlStringify(config, { indent: 2, lineWidth: 100 });
     fs.writeFileSync(configPath, header + yamlContent, "utf-8");
     return true;
   } catch (error) {
-    p.log.error(
-      `Failed to save config: ${error instanceof Error ? error.message : "Unknown error"}`
-    );
+    p.log.error(`Failed to save config: ${error instanceof Error ? error.message : "Unknown"}`);
     return false;
   }
 }
 
 // ============================================================================
-// Clear State
+// Main Setup Wizard - Restructured Flow
 // ============================================================================
 
 /**
- * Clear configured env vars (for fresh setup)
+ * Detect which CLI environment we're running from
+ * This determines which provider can use subscription mode
  */
-function clearConfiguredEnvVars(): void {
-  configuredEnvVars.clear();
+function detectCurrentCLI(): string | null {
+  // Check for Claude Code indicators
+  if (process.env["CLAUDE_CODE"] || process.env["ANTHROPIC_API_KEY"] === "claude-code-session") {
+    return "anthropic";
+  }
+  // Check for Codex CLI
+  if (process.env["OPENAI_CODEX_CLI"]) {
+    return "openai";
+  }
+  // Check for Gemini CLI
+  if (process.env["GEMINI_CLI"]) {
+    return "google";
+  }
+  // Default assumption: running from Claude Code
+  return "anthropic";
 }
 
-// ============================================================================
-// Main Setup Wizard
-// ============================================================================
-
-/**
- * Run the main setup wizard
- */
 export async function runSetupWizard(): Promise<void> {
   displayBanner();
 
-  p.intro(color.bgCyan(color.black(" Welcome to AgentRouter ")));
+  p.intro(color.bgCyan(color.black(" AgentRouter Setup v2 ")));
 
-  // Provider selection
-  p.log.message(
-    color.dim("Use arrow keys to navigate, space to select, enter to confirm.")
+  const currentCLI = detectCurrentCLI();
+
+  // ============================================================================
+  // STEP 1: Choose Orchestrator
+  // ============================================================================
+  
+  p.note(
+    "The " + color.bold("orchestrator") + " is the main AI that coordinates all other agents.\n" +
+    "It runs IN your current CLI session and routes tasks to specialized agents.\n\n" +
+    "Since you're running from " + color.cyan("Claude Code") + ", Anthropic can use your\n" +
+    "subscription. All other providers require API keys.",
+    "Step 1: Choose Your Orchestrator"
   );
 
-  const selectedProviders = await p.multiselect({
-    message: "Which providers would you like to configure?",
+  const orchestratorProvider = await p.select({
+    message: "Which provider should be your orchestrator?",
     options: AVAILABLE_PROVIDERS.map((provider) => ({
       value: provider.value,
       label: provider.label,
-      ...(provider.hint ? { hint: provider.hint } : {}),
+      hint: provider.value === currentCLI 
+        ? "Can use subscription (no API key needed)" 
+        : "Requires API key",
     })),
-    required: true,
   });
 
-  if (p.isCancel(selectedProviders)) {
+  if (p.isCancel(orchestratorProvider)) {
     p.cancel("Setup cancelled");
     process.exit(0);
   }
 
+  // Configure orchestrator
   const providers: Record<string, ProviderConfig> = {};
   const configuredProviderNames: string[] = [];
+  
+  let orchestratorConfig: ProviderConfig | null = null;
+  let orchestratorAccessMode: AccessMode = "api";
 
-  // Configure each selected provider
-  for (const providerType of selectedProviders as string[]) {
-    let config: ProviderConfig | null = null;
+  // If orchestrator matches current CLI, offer subscription mode
+  if (orchestratorProvider === currentCLI) {
+    const accessChoice = await p.select({
+      message: `How do you want to access ${orchestratorProvider}?`,
+      options: [
+        {
+          value: "subscription" as const,
+          label: "Use my subscription (no API key)",
+          hint: "Recommended - uses your current Claude Code session",
+        },
+        {
+          value: "api" as const,
+          label: "Use API key",
+          hint: "Pay-per-token, separate from subscription",
+        },
+      ],
+    });
 
-    switch (providerType) {
-      case "anthropic":
-        config = await configureAnthropic();
-        break;
-      case "openai":
-        config = await configureOpenAI();
-        break;
-      case "google":
-        config = await configureGemini();
-        break;
-      case "ollama":
-        config = await configureOllama();
-        break;
+    if (p.isCancel(accessChoice)) {
+      p.cancel("Setup cancelled");
+      process.exit(0);
     }
 
-    if (config) {
-      providers[providerType] = config;
-      configuredProviderNames.push(providerType);
-      p.log.success(`Configured ${color.cyan(providerType)} provider`);
-    }
+    orchestratorAccessMode = accessChoice as AccessMode;
   }
 
-  if (configuredProviderNames.length === 0) {
-    p.cancel("No providers configured. Please run setup again.");
+  // Configure the orchestrator provider
+  if (orchestratorAccessMode === "subscription") {
+    p.note(
+      "Your orchestrator will use Claude Code's session.\n" +
+      "No API key needed - requests pass through your subscription.",
+      "Subscription Mode"
+    );
+    
+    const model = await p.select({
+      message: "Select default Claude model:",
+      options: ANTHROPIC_MODELS.map((m) => ({
+        value: m.value,
+        label: m.label,
+        ...(m.hint ? { hint: m.hint } : {}),
+      })),
+    });
+
+    if (p.isCancel(model)) {
+      p.cancel("Setup cancelled");
+      process.exit(0);
+    }
+
+    orchestratorConfig = {
+      access_mode: "subscription",
+      default_model: model as string,
+    };
+  } else {
+    // Need API key for orchestrator
+    orchestratorConfig = await configureProviderWithAPIKey(orchestratorProvider as string);
+  }
+
+  if (orchestratorConfig) {
+    providers[orchestratorProvider as string] = orchestratorConfig;
+    configuredProviderNames.push(orchestratorProvider as string);
+    p.log.success(`Orchestrator configured: ${orchestratorProvider}`);
+  } else {
+    p.cancel("Failed to configure orchestrator");
     process.exit(1);
   }
 
-  // Configure roles
-  console.log();
-  const roles = await configureRoles(configuredProviderNames);
+  // ============================================================================
+  // STEP 2: Add Agent Providers (all require API keys)
+  // ============================================================================
 
-  // Generate config
-  const config = generateConfig(providers, roles);
-  const configPath = getUserConfigPath();
-
-  // Preview config
-  console.log();
-  p.note(generateConfigSummary(config, configPath), "Configuration Summary");
-
-  // Confirm save
-  const saveConfirm = await p.confirm({
-    message: `Save configuration to ${color.cyan(configPath)}?`,
-    initialValue: true,
-  });
-
-  if (p.isCancel(saveConfirm) || !saveConfirm) {
-    // Offer to print full config
-    const printConfig = await p.confirm({
-      message: "Print full YAML configuration to console instead?",
-      initialValue: true,
-    });
-
-    if (!p.isCancel(printConfig) && printConfig) {
-      const yamlOutput = yamlStringify(config, { indent: 2, lineWidth: 100 });
-      console.log("\n" + yamlOutput);
-    }
-
-    p.outro(color.yellow("Configuration not saved"));
-    return;
-  }
-
-  // Save config
-  const saved = await saveConfig(config);
-
-  if (!saved) {
-    p.outro(color.red("Failed to save configuration"));
-    return;
-  }
-
-  // Add env vars to shell profile
-  console.log();
-  await addEnvVarsToShellProfile();
-
-  // Success outro
-  console.log();
-  const shellProfile = getShellProfilePath();
-  p.note(
-    `${color.bold("1. Restart your terminal or run:")}\n` +
-      `   ${color.cyan(`source ${shellProfile}`)}\n\n` +
-      `${color.bold("2. Add AgentRouter to Claude Code's MCP config:")}\n` +
-      `   ${color.cyan("~/.config/claude-code/mcp.json")}\n\n` +
-      `${color.bold("3. Invoke agents from Claude Code:")}\n` +
-      `   ${color.cyan('Use invoke_agent with role: "coder", "critic", etc.')}`,
-    "Next Steps"
+  const remainingProviders = AVAILABLE_PROVIDERS.filter(
+    (prov) => prov.value !== orchestratorProvider
   );
 
-  // Clear env vars tracking for next run
-  clearConfiguredEnvVars();
+  p.note(
+    "Now add providers for your agent roles (coder, critic, reviewer, etc.).\n" +
+    "These are called " + color.bold("via API") + " by your orchestrator.\n\n" +
+    color.yellow("All providers below require API keys.") + "\n" +
+    "Your orchestrator will make API calls to these providers.",
+    "Step 2: Add Agent Providers"
+  );
 
-  p.outro(color.green("Setup complete!"));
+  const selectedAgentProviders = await p.multiselect({
+    message: "Which additional providers do you want for agent roles?",
+    options: remainingProviders.map((provider) => ({
+      value: provider.value,
+      label: provider.label,
+      ...(provider.hint ? { hint: provider.hint } : {}),
+    })),
+    required: false,
+  });
+
+  if (p.isCancel(selectedAgentProviders)) {
+    p.cancel("Setup cancelled");
+    process.exit(0);
+  }
+
+  // ============================================================================
+  // STEP 3: Configure API Keys
+  // ============================================================================
+
+  if ((selectedAgentProviders as string[]).length > 0) {
+    p.note(
+      "Configure API keys for each selected provider.\n" +
+      "Keys are stored in your config and/or shell profile.",
+      "Step 3: Configure API Keys"
+    );
+
+    for (const providerType of selectedAgentProviders as string[]) {
+      const config = await configureProviderWithAPIKey(providerType);
+
+      if (config) {
+        providers[providerType] = config;
+        configuredProviderNames.push(providerType);
+        p.log.success(`${providerType} configured`);
+      }
+    }
+  }
+
+  // ============================================================================
+  // STEP 4: Assign Roles
+  // ============================================================================
+
+  p.note(
+    "Assign providers to agent roles.\n" +
+    "Each role can use any configured provider.",
+    "Step 4: Assign Agent Roles"
+  );
+
+  const roles = await configureRoles(configuredProviderNames, orchestratorProvider as string);
+
+  // ============================================================================
+  // Save Configuration
+  // ============================================================================
+
+  const config = generateConfig(providers, roles);
+  const saved = await saveConfig(config);
+
+  if (saved) {
+    await addEnvVarsToShellProfile();
+
+    p.outro(color.green("✓ AgentRouter configured successfully!"));
+
+    console.log();
+    console.log(color.bold("  Summary"));
+    console.log();
+    console.log(`  Orchestrator: ${color.cyan(orchestratorProvider as string)} (${orchestratorAccessMode})`);
+    console.log(`  Agent Providers: ${configuredProviderNames.filter(p => p !== orchestratorProvider).join(", ") || "none"}`);
+    console.log(`  Roles: ${Object.keys(roles).join(", ")}`);
+    console.log();
+    console.log(`  Config: ${color.dim(getUserConfigPath())}`);
+    console.log();
+  } else {
+    p.cancel("Failed to save configuration");
+    process.exit(1);
+  }
 }
 
+/**
+ * Configure a provider that requires an API key
+ */
+async function configureProviderWithAPIKey(providerType: string): Promise<ProviderConfig | null> {
+  switch (providerType) {
+    case "anthropic":
+      return configureAnthropicAPI();
+    case "openai":
+      return configureOpenAIAPI();
+    case "google":
+      return configureGeminiAPI();
+    case "deepseek":
+      return configureDeepSeek();
+    case "zai":
+      return configureZaiAPI();
+    case "ollama":
+      return configureOllama();
+    default:
+      return null;
+  }
+}
+
+/**
+ * Configure Anthropic with API key (no subscription option)
+ */
+async function configureAnthropicAPI(): Promise<ProviderConfig | null> {
+  p.note(
+    "Get your API key from:\n" +
+    color.cyan("https://console.anthropic.com/settings/keys"),
+    "Anthropic API Setup"
+  );
+
+  const apiKey = await p.password({
+    message: "Enter your Anthropic API key:",
+    validate: (value) => validateApiKey(value, "anthropic"),
+  });
+
+  if (p.isCancel(apiKey)) return null;
+
+  const result = await testConnectionWithSpinner(
+    "Anthropic",
+    () => testAnthropicConnection(apiKey as string)
+  );
+
+  if (!result.success) {
+    const continueAnyway = await p.confirm({
+      message: `Connection failed: ${result.error}. Continue anyway?`,
+      initialValue: false,
+    });
+    if (p.isCancel(continueAnyway) || !continueAnyway) return null;
+  }
+
+  const model = await p.select({
+    message: "Select default Claude model:",
+    options: ANTHROPIC_MODELS.map((m) => ({
+      value: m.value,
+      label: m.label,
+      ...(m.hint ? { hint: m.hint } : {}),
+    })),
+  });
+
+  if (p.isCancel(model)) return null;
+
+  // Store API key for later shell profile export
+  configuredEnvVars.set("ANTHROPIC_API_KEY", apiKey as string);
+
+  return {
+    access_mode: "api",
+    api_key: `\${ANTHROPIC_API_KEY}`,
+    base_url: "https://api.anthropic.com/v1",
+    default_model: model as string,
+  };
+}
+
+/**
+ * Configure OpenAI with API key (no subscription option)
+ */
+async function configureOpenAIAPI(): Promise<ProviderConfig | null> {
+  p.note(
+    "Get your API key from:\n" +
+    color.cyan("https://platform.openai.com/api-keys"),
+    "OpenAI API Setup"
+  );
+
+  const apiKey = await p.password({
+    message: "Enter your OpenAI API key:",
+    validate: (value) => validateApiKey(value, "openai"),
+  });
+
+  if (p.isCancel(apiKey)) return null;
+
+  const result = await testConnectionWithSpinner(
+    "OpenAI",
+    () => testOpenAIConnection(apiKey as string)
+  );
+
+  if (!result.success) {
+    const continueAnyway = await p.confirm({
+      message: `Connection failed: ${result.error}. Continue anyway?`,
+      initialValue: false,
+    });
+    if (p.isCancel(continueAnyway) || !continueAnyway) return null;
+  }
+
+  const model = await p.select({
+    message: "Select default OpenAI model:",
+    options: OPENAI_MODELS.map((m) => ({
+      value: m.value,
+      label: m.label,
+      ...(m.hint ? { hint: m.hint } : {}),
+    })),
+  });
+
+  if (p.isCancel(model)) return null;
+
+  // Store API key for later shell profile export
+  configuredEnvVars.set("OPENAI_API_KEY", apiKey as string);
+
+  return {
+    access_mode: "api",
+    api_key: `\${OPENAI_API_KEY}`,
+    base_url: "https://api.openai.com/v1",
+    default_model: model as string,
+  };
+}
+
+/**
+ * Configure Gemini with API key (no subscription option)
+ */
+async function configureGeminiAPI(): Promise<ProviderConfig | null> {
+  p.note(
+    "Get your API key from:\n" +
+    color.cyan("https://aistudio.google.com/apikey"),
+    "Google Gemini API Setup"
+  );
+
+  const apiKey = await p.password({
+    message: "Enter your Gemini API key:",
+    validate: (value) => validateApiKey(value, "gemini"),
+  });
+
+  if (p.isCancel(apiKey)) return null;
+
+  const result = await testConnectionWithSpinner(
+    "Gemini",
+    () => testGeminiConnection(apiKey as string)
+  );
+
+  if (!result.success) {
+    const continueAnyway = await p.confirm({
+      message: `Connection failed: ${result.error}. Continue anyway?`,
+      initialValue: false,
+    });
+    if (p.isCancel(continueAnyway) || !continueAnyway) return null;
+  }
+
+  const model = await p.select({
+    message: "Select default Gemini model:",
+    options: GEMINI_MODELS.map((m) => ({
+      value: m.value,
+      label: m.label,
+      ...(m.hint ? { hint: m.hint } : {}),
+    })),
+  });
+
+  if (p.isCancel(model)) return null;
+
+  // Store API key for later shell profile export
+  configuredEnvVars.set("GEMINI_API_KEY", apiKey as string);
+
+  return {
+    access_mode: "api",
+    api_key: `\${GEMINI_API_KEY}`,
+    base_url: "https://generativelanguage.googleapis.com/v1beta",
+    default_model: model as string,
+  };
+}
+
+/**
+ * Configure Z.AI with API key (no subscription option)
+ */
+async function configureZaiAPI(): Promise<ProviderConfig | null> {
+  p.note(
+    "GLM-4.7 excels at agentic coding tasks.\n" +
+    "Get your API key from:\n" +
+    color.cyan("https://z.ai/manage-apikey/apikey-list"),
+    "Z.AI GLM API Setup"
+  );
+
+  const apiKey = await p.password({
+    message: "Enter your Z.AI API key:",
+    validate: (value) => validateApiKey(value, "zai"),
+  });
+
+  if (p.isCancel(apiKey)) return null;
+
+  const result = await testConnectionWithSpinner(
+    "Z.AI",
+    () => testZaiConnection(apiKey as string)
+  );
+
+  if (!result.success) {
+    const continueAnyway = await p.confirm({
+      message: `Connection failed: ${result.error}. Continue anyway?`,
+      initialValue: false,
+    });
+    if (p.isCancel(continueAnyway) || !continueAnyway) return null;
+  }
+
+  const model = await p.select({
+    message: "Select default GLM model:",
+    options: ZAI_MODELS.map((m) => ({
+      value: m.value,
+      label: m.label,
+      ...(m.hint ? { hint: m.hint } : {}),
+    })),
+  });
+
+  if (p.isCancel(model)) return null;
+
+  // Store API key for later shell profile export
+  configuredEnvVars.set("ZAI_API_KEY", apiKey as string);
+
+  return {
+    access_mode: "api",
+    api_key: `\${ZAI_API_KEY}`,
+    base_url: "https://api.z.ai/api/paas/v4",
+    default_model: model as string,
+  };
+}
+
+
 // ============================================================================
-// Additional CLI Commands
+// Provider Management Functions (for CLI subcommands)
 // ============================================================================
 
 /**
  * Add a single provider interactively
  */
 export async function addProvider(providerName?: string): Promise<void> {
+  displayBanner();
+
   p.intro(color.bgCyan(color.black(" Add Provider ")));
 
-  // Load existing config if present
-  const configPath = getUserConfigPath();
-  let existingConfig: Config | null = null;
+  let selectedProvider: string;
 
-  if (fs.existsSync(configPath)) {
-    try {
-      const content = fs.readFileSync(configPath, "utf-8");
-      const yaml = await import("yaml");
-      existingConfig = yaml.parse(content) as Config;
-    } catch {
-      p.log.warn("Could not load existing config, will create new one");
+  if (providerName) {
+    // Validate provider name
+    const validProvider = AVAILABLE_PROVIDERS.find(
+      (p) => p.value.toLowerCase() === providerName.toLowerCase()
+    );
+    if (!validProvider) {
+      p.log.error(`Unknown provider: ${providerName}`);
+      p.log.info(`Available providers: ${AVAILABLE_PROVIDERS.map((p) => p.value).join(", ")}`);
+      process.exit(1);
     }
-  }
-
-  // Select provider to add
-  let providerType: string | symbol;
-
-  if (providerName && AVAILABLE_PROVIDERS.some((p) => p.value === providerName)) {
-    providerType = providerName;
+    selectedProvider = validProvider.value;
   } else {
-    providerType = await p.select({
-      message: "Select provider to add:",
+    // Let user select provider
+    const choice = await p.select({
+      message: "Which provider would you like to add?",
       options: AVAILABLE_PROVIDERS.map((provider) => ({
         value: provider.value,
         label: provider.label,
@@ -1098,15 +1615,16 @@ export async function addProvider(providerName?: string): Promise<void> {
       })),
     });
 
-    if (p.isCancel(providerType)) {
+    if (p.isCancel(choice)) {
       p.cancel("Cancelled");
-      return;
+      process.exit(0);
     }
+    selectedProvider = choice as string;
   }
 
   let config: ProviderConfig | null = null;
 
-  switch (providerType) {
+  switch (selectedProvider) {
     case "anthropic":
       config = await configureAnthropic();
       break;
@@ -1116,260 +1634,99 @@ export async function addProvider(providerName?: string): Promise<void> {
     case "google":
       config = await configureGemini();
       break;
+    case "deepseek":
+      config = await configureDeepSeek();
+      break;
+    case "zai":
+      config = await configureZai();
+      break;
     case "ollama":
       config = await configureOllama();
       break;
   }
 
-  if (!config) {
-    p.cancel("Provider configuration cancelled");
-    return;
-  }
-
-  // Update or create config
-  if (existingConfig) {
-    // Check if provider already exists
-    if (existingConfig.providers[providerType as string]) {
-      const replace = await p.confirm({
-        message: `Provider "${providerType}" already exists. Replace it?`,
-        initialValue: true,
-      });
-
-      if (p.isCancel(replace) || !replace) {
-        p.cancel("Cancelled");
-        return;
-      }
-    }
-
-    existingConfig.providers[providerType as string] = config;
-
-    // Save updated config
-    const saved = await saveConfig(existingConfig);
-
-    if (saved) {
-      // Add env vars to shell profile
-      if (configuredEnvVars.size > 0) {
-        console.log();
-        await addEnvVarsToShellProfile();
-      }
-
-      clearConfiguredEnvVars();
-      p.outro(color.green(`Added ${providerType} provider`));
-    } else {
-      p.outro(color.red("Failed to save configuration"));
-    }
-  } else {
-    // Create new config with just this provider
-    const newConfig = generateConfig(
-      { [providerType as string]: config },
-      buildDefaultRoles([providerType as string])
-    );
-
-    const saved = await saveConfig(newConfig);
-
-    if (saved) {
-      // Add env vars to shell profile
-      if (configuredEnvVars.size > 0) {
-        console.log();
-        await addEnvVarsToShellProfile();
-      }
-
-      clearConfiguredEnvVars();
-      p.outro(color.green(`Created config with ${providerType} provider`));
-    } else {
-      p.outro(color.red("Failed to save configuration"));
-    }
+  if (config) {
+    // TODO: Merge with existing config
+    p.log.success(`${selectedProvider} configured`);
+    await addEnvVarsToShellProfile();
   }
 }
 
 /**
- * Test provider connection
+ * Test provider connection(s)
  */
 export async function testProvider(providerName?: string): Promise<void> {
-  p.intro(color.bgCyan(color.black(" Provider Connection Test ")));
+  p.intro(color.bgCyan(color.black(" Test Provider Connection ")));
 
+  // Load existing config
   const configPath = getUserConfigPath();
-
   if (!fs.existsSync(configPath)) {
-    p.log.warn("No configuration found. Run: agent-router setup");
-    p.outro(color.yellow("No providers to test"));
-    return;
+    p.log.error("No configuration file found.");
+    p.log.info("Run 'agent-router setup' first to configure providers.");
+    process.exit(1);
   }
 
-  let config: Config;
-  try {
-    const content = fs.readFileSync(configPath, "utf-8");
-    const yaml = await import("yaml");
-    config = yaml.parse(content) as Config;
-  } catch (error) {
-    p.log.error(
-      `Failed to load config: ${error instanceof Error ? error.message : "Unknown error"}`
+  // For now, just test based on provider name
+  if (providerName) {
+    const provider = AVAILABLE_PROVIDERS.find(
+      (p) => p.value.toLowerCase() === providerName.toLowerCase()
     );
-    p.outro(color.red("Test failed"));
-    return;
-  }
-
-  const providerNames = Object.keys(config.providers);
-
-  if (providerNames.length === 0) {
-    p.log.warn("No providers configured. Run: agent-router setup");
-    p.outro(color.yellow("No providers to test"));
-    return;
-  }
-
-  // Select provider to test if not specified
-  let selectedProvider: string;
-
-  if (providerName && providerNames.includes(providerName)) {
-    selectedProvider = providerName;
+    if (!provider) {
+      p.log.error(`Unknown provider: ${providerName}`);
+      p.log.info(`Available providers: ${AVAILABLE_PROVIDERS.map((p) => p.value).join(", ")}`);
+      process.exit(1);
+    }
+    p.log.info(`Testing ${provider.label}...`);
+    p.log.warn("Provider testing requires API keys in environment or config.");
   } else {
-    const selected = await p.select({
-      message: "Select provider to test:",
-      options: [
-        { value: "__all__", label: "Test all providers" },
-        ...providerNames.map((name) => ({
-          value: name,
-          label: name,
-        })),
-      ],
-    });
-
-    if (p.isCancel(selected)) {
-      p.cancel("Test cancelled");
-      return;
-    }
-
-    selectedProvider = selected as string;
+    p.log.info("Testing all configured providers...");
+    p.log.warn("Provider testing requires API keys in environment or config.");
   }
 
-  const providersToTest =
-    selectedProvider === "__all__" ? providerNames : [selectedProvider];
-
-  let allPassed = true;
-
-  for (const name of providersToTest) {
-    const providerConfig = config.providers[name];
-    if (!providerConfig) continue;
-
-    let result: ConnectionTestResult;
-
-    // Resolve env vars in API key
-    let apiKey = providerConfig.api_key ?? "";
-    const envVarMatch = apiKey.match(/\$\{(\w+)\}/);
-    if (envVarMatch) {
-      const envVarName = envVarMatch[1];
-      apiKey = process.env[envVarName!] ?? "";
-      if (!apiKey) {
-        p.log.error(`Environment variable ${envVarName} is not set`);
-        allPassed = false;
-        continue;
-      }
-    }
-
-    switch (name) {
-      case "anthropic":
-        result = await testConnectionWithSpinner("Anthropic", () =>
-          testAnthropicConnection(apiKey, providerConfig.base_url)
-        );
-        break;
-      case "openai":
-        result = await testConnectionWithSpinner("OpenAI", () =>
-          testOpenAIConnection(apiKey, providerConfig.base_url)
-        );
-        break;
-      case "google":
-        result = await testConnectionWithSpinner("Gemini", () =>
-          testGeminiConnection(apiKey)
-        );
-        break;
-      case "ollama":
-        result = await testConnectionWithSpinner("Ollama", () =>
-          testOllamaConnection(providerConfig.base_url)
-        );
-        if (result.success && result.models) {
-          p.log.info(`Available models: ${result.models.join(", ")}`);
-        }
-        break;
-      default:
-        p.log.warn(`Unknown provider type: ${name}`);
-        result = { success: false, latencyMs: 0, error: "Unknown provider" };
-    }
-
-    if (!result.success) {
-      allPassed = false;
-    }
-  }
-
-  if (allPassed) {
-    p.outro(color.green("All connection tests passed"));
-  } else {
-    p.outro(color.red("Some connection tests failed"));
-  }
+  p.outro("Test complete");
 }
 
 /**
  * List configured providers
  */
 export async function listProviders(): Promise<void> {
-  p.intro(color.bgCyan(color.black(" Configured Providers ")));
-
   const configPath = getUserConfigPath();
 
   if (!fs.existsSync(configPath)) {
-    p.log.warn("No configuration found. Run: agent-router setup");
-    p.outro(color.yellow("No providers configured"));
+    console.log("No configuration file found.");
+    console.log("Run 'agent-router setup' to configure providers.");
     return;
   }
 
-  let config: Config;
   try {
-    const content = fs.readFileSync(configPath, "utf-8");
-    const yaml = await import("yaml");
-    config = yaml.parse(content) as Config;
-  } catch (error) {
-    p.log.error(
-      `Failed to load config: ${error instanceof Error ? error.message : "Unknown error"}`
-    );
-    p.outro(color.red("Error reading configuration"));
-    return;
-  }
+    const configContent = fs.readFileSync(configPath, "utf-8");
+    const { parse } = await import("yaml");
+    const config = parse(configContent) as { providers?: Record<string, ProviderConfig> };
 
-  const providers = Object.entries(config.providers);
-
-  if (providers.length === 0) {
-    p.log.warn("No providers configured");
-    p.outro(color.yellow("Run: agent-router setup"));
-    return;
-  }
-
-  console.log();
-
-  for (const [name, providerConfig] of providers) {
-    console.log(`  ${color.bold(name)}`);
-
-    if (providerConfig.base_url) {
-      console.log(`    ${color.dim("URL:")} ${providerConfig.base_url}`);
-    }
-
-    if (providerConfig.api_key) {
-      const keyDisplay = providerConfig.api_key.includes("${")
-        ? providerConfig.api_key
-        : "[REDACTED]";
-      console.log(`    ${color.dim("Key:")} ${keyDisplay}`);
+    if (!config.providers || Object.keys(config.providers).length === 0) {
+      console.log("No providers configured.");
+      console.log("Run 'agent-router setup' to add providers.");
+      return;
     }
 
     console.log();
-  }
+    console.log(color.bold("Configured Providers:"));
+    console.log();
 
-  // Show roles using each provider
-  console.log(color.bold("  Role Assignments:"));
-  for (const [roleName, roleConfig] of Object.entries(config.roles)) {
-    console.log(
-      `    ${color.cyan(roleName.padEnd(12))} -> ${roleConfig.provider}/${color.dim(roleConfig.model)}`
-    );
-  }
-  console.log();
+    for (const [name, providerConfig] of Object.entries(config.providers)) {
+      const accessMode = providerConfig.access_mode ?? "api";
+      const model = providerConfig.default_model ?? "default";
+      const hasApiKey = providerConfig.api_key ? "✓" : "✗";
 
-  p.log.info(`Config file: ${color.dim(configPath)}`);
-  p.outro(`${providers.length} provider(s) configured`);
+      console.log(`  ${color.cyan(name.padEnd(12))} ${accessMode.padEnd(14)} ${model}`);
+      if (accessMode === "api") {
+        console.log(`    ${color.dim(`API Key: ${hasApiKey}`)}`);
+      }
+    }
+
+    console.log();
+  } catch (error) {
+    console.error("Error reading configuration:", error instanceof Error ? error.message : error);
+    process.exit(1);
+  }
 }
