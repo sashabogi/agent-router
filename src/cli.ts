@@ -20,6 +20,7 @@ import {
   testProvider,
   listProviders,
 } from "./cli/setup-wizard.js";
+import { installSkills } from "./cli/install-skills.js";
 
 export const VERSION = "0.1.0";
 
@@ -38,7 +39,8 @@ export type Command =
   | "validate"
   | "version"
   | "help"
-  | "provider";
+  | "provider"
+  | "install-skills";
 
 /**
  * Provider subcommands.
@@ -82,6 +84,7 @@ Commands:
   list-roles    List available agent roles
   validate      Validate configuration
   provider      Manage providers (add, test, list)
+  install-skills Install AgentRouter skills to ~/.claude/skills/
   version       Show version
   help          Show this help message
 
@@ -252,7 +255,7 @@ export function parseArgs(argv: string[]): CLIOptions {
  * Check if a string is a valid command.
  */
 function isValidCommand(cmd: string): cmd is Command {
-  return ["setup", "start", "init", "list-roles", "validate", "version", "help", "provider"].includes(cmd);
+  return ["setup", "start", "init", "list-roles", "validate", "version", "help", "provider", "install-skills"].includes(cmd);
 }
 
 /**
@@ -564,6 +567,9 @@ export async function runCLI(options: CLIOptions): Promise<void> {
       break;
     case "provider":
       await cmdProvider(options);
+      break;
+    case "install-skills":
+      await installSkills();
       break;
     case "version":
       cmdVersion();
