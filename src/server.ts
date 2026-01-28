@@ -21,7 +21,7 @@ import { TaskCoordinator, PipelineManager } from "./tasks/index.js";
 import type { Config, TasksConfig } from "./types.js";
 
 const SERVER_NAME = "agent-router";
-const SERVER_VERSION = "0.1.0";
+const SERVER_VERSION = "3.0.0";
 
 /**
  * Creates and configures the MCP server

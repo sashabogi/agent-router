@@ -22,7 +22,7 @@ import {
 } from "./cli/setup-wizard.js";
 import { installSkills } from "./cli/install-skills.js";
 
-export const VERSION = "0.1.0";
+export const VERSION = "3.0.0";
 
 // ============================================================================
 // Types

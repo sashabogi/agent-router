@@ -5,7 +5,7 @@
 
 import { createServer, startServer } from "./server.js";
 
-export const VERSION = "0.1.0";
+export const VERSION = "3.0.0";
 
 /**
  * Main entry point - creates and starts the MCP server
