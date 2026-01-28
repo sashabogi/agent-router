@@ -1,6 +1,6 @@
 {
   "name": "mcp-agent-router",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "MCP server for multi-agent orchestration - route tasks to specialized AI agents from different LLM providers",
   "type": "module",
   "main": "dist/index.js",
