@@ -1,6 +1,6 @@
 {
   "name": "@sashabogi/agent-router",
-  "version": "0.1.0",
+  "version": "3.0.0",
   "description": "MCP server for multi-agent orchestration - route tasks to specialized AI agents from different LLM providers",
   "type": "module",
   "main": "dist/index.js",
@@ -61,7 +61,8 @@
   },
   "files": [
     "dist",
-    "config"
+    "config",
+    "skills"
   ],
   "repository": {
     "type": "git",
