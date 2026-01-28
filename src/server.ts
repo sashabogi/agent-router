@@ -16,8 +16,9 @@ import { ProviderManager } from "./providers/manager.js";
 import { OllamaProvider } from "./providers/ollama.js";
 import { OpenAIProvider } from "./providers/openai.js";
 import { RouterEngine } from "./router/engine.js";
+import { TaskCoordinator, PipelineManager } from "./tasks/index.js";
 
-import type { Config } from "./types.js";
+import type { Config, TasksConfig } from "./types.js";
 
 const SERVER_NAME = "agent-router";
 const SERVER_VERSION = "0.1.0";
@@ -88,6 +89,17 @@ export async function createServer(): Promise<McpServer> {
     availableRoles: router.listRoles(),
   });
 
+  // Create task integration modules if enabled
+  let taskCoordinator: TaskCoordinator | undefined;
+  let pipelineManager: PipelineManager | undefined;
+
+  const tasksConfig = (config as { tasks?: TasksConfig }).tasks;
+  if (tasksConfig?.enabled) {
+    logger.info("Tasks integration enabled, creating task modules");
+    taskCoordinator = new TaskCoordinator(logger);
+    pipelineManager = new PipelineManager(logger);
+  }
+
   // Create MCP server with capabilities
   const server = new McpServer({
     name: SERVER_NAME,
@@ -95,7 +107,7 @@ export async function createServer(): Promise<McpServer> {
   });
 
   // Register all tools
-  registerTools(server, router, logger);
+  registerTools(server, router, logger, taskCoordinator, pipelineManager);
 
   // Setup config change listener for hot reload
   if (configManager) {

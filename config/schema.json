@@ -88,6 +88,84 @@
           }
         }
       ]
+    },
+    "tasks": {
+      "type": "object",
+      "description": "Configuration for Claude Code Tasks integration",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable task-aware tools"
+        },
+        "defaults": {
+          "type": "object",
+          "description": "Default behavior settings for task execution",
+          "additionalProperties": false,
+          "properties": {
+            "autoComplete": {
+              "type": "boolean",
+              "default": true,
+              "description": "Automatically mark tasks complete on success"
+            },
+            "autoRelease": {
+              "type": "boolean",
+              "default": true,
+              "description": "Automatically release tasks on failure"
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "default": 120000,
+              "description": "Maximum execution time per task in ms"
+            }
+          }
+        },
+        "worker": {
+          "type": "object",
+          "description": "Worker mode settings for background task processing",
+          "additionalProperties": false,
+          "properties": {
+            "heartbeatMs": {
+              "type": "integer",
+              "default": 30000,
+              "description": "Heartbeat interval in ms"
+            },
+            "idleTimeoutMs": {
+              "type": "integer",
+              "default": 300000,
+              "description": "Shutdown after idle for this duration in ms"
+            },
+            "maxRetries": {
+              "type": "integer",
+              "default": 3,
+              "description": "Maximum retry attempts for failed tasks"
+            }
+          }
+        },
+        "pipeline": {
+          "type": "object",
+          "description": "Pipeline settings for multi-step task orchestration",
+          "additionalProperties": false,
+          "properties": {
+            "maxParallel": {
+              "type": "integer",
+              "default": 3,
+              "description": "Maximum concurrent pipeline steps"
+            },
+            "defaultParallel": {
+              "type": "boolean",
+              "default": true,
+              "description": "Execute independent steps in parallel by default"
+            },
+            "maxContextLength": {
+              "type": "integer",
+              "default": 50000,
+              "description": "Maximum context length before truncation"
+            }
+          }
+        }
+      }
     }
   },
   "definitions": {

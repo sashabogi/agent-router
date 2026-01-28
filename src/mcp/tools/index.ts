@@ -12,9 +12,11 @@ import { registerCritiquePlanTool } from "./critique-plan.js";
 import { registerDesignFeedbackTool } from "./design-feedback.js";
 import { registerInvokeAgentTool } from "./invoke-agent.js";
 import { registerReviewCodeTool } from "./review-code.js";
+import { registerTaskTools } from "./tasks/index.js";
 
 import type { Logger } from "../../observability/logger.js";
 import type { RouterEngine } from "../../router/engine.js";
+import type { TaskCoordinator, PipelineManager } from "../../tasks/index.js";
 
 // ============================================================================
 // Tool Registration
@@ -38,7 +40,9 @@ import type { RouterEngine } from "../../router/engine.js";
 export function registerTools(
   server: McpServer,
   router: RouterEngine,
-  logger: Logger
+  logger: Logger,
+  taskCoordinator?: TaskCoordinator,
+  pipelineManager?: PipelineManager
 ): void {
   logger.info("Registering AgentRouter tools");
 
@@ -60,16 +64,32 @@ export function registerTools(
   // Register critique_plan tool
   registerCritiquePlanTool(server, router, logger);
 
-  logger.info("AgentRouter tools registered successfully", {
-    tools: [
-      "invoke_agent",
-      "list_agents",
-      "compare_agents",
-      "review_code",
-      "design_feedback",
-      "critique_plan",
-    ],
-  });
+  // Register task-aware tools if task integration is enabled
+  if (taskCoordinator && pipelineManager) {
+    registerTaskTools(server, router, taskCoordinator, pipelineManager, logger);
+    logger.info("Task-aware tools registered");
+  }
+
+  const tools = [
+    "invoke_agent",
+    "list_agents",
+    "compare_agents",
+    "review_code",
+    "design_feedback",
+    "critique_plan",
+  ];
+
+  if (taskCoordinator && pipelineManager) {
+    tools.push(
+      "create_routed_task",
+      "claim_next_task",
+      "execute_task",
+      "get_pipeline_status",
+      "execute_pipeline"
+    );
+  }
+
+  logger.info("AgentRouter tools registered successfully", { tools });
 }
 
 // ============================================================================

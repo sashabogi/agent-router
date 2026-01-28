@@ -478,3 +478,188 @@ export class TranslationError extends AgentRouterError {
     this.name = 'TranslationError';
   }
 }
+
+// ============================================================================
+// Task Integration Types (v3.0)
+// ============================================================================
+
+/**
+ * Execution state for a task being processed by AgentRouter.
+ */
+export interface TaskExecution {
+  /** Claude Code task ID */
+  taskId: string;
+  /** Agent role used for execution */
+  role: string;
+  /** Unique trace ID for this execution */
+  traceId: string;
+  /** Execution start timestamp */
+  startTime: number;
+  /** Execution end timestamp (set on completion/failure) */
+  endTime?: number;
+  /** Current execution status */
+  status: 'running' | 'completed' | 'failed';
+  /** Agent response on success */
+  result?: AgentResponse;
+  /** Error details on failure */
+  error?: Error;
+}
+
+/**
+ * Instructions for Claude to execute task lifecycle operations.
+ * MCP tools cannot directly call Claude Code tools, so they return
+ * instruction strings that Claude must execute.
+ */
+export interface ClaimInstructions {
+  /** Instruction to claim the task before execution */
+  preExecution: string;
+  /** Instruction to mark task complete on success */
+  onSuccess: string;
+  /** Instruction to release task on failure */
+  onFailure: string;
+}
+
+/**
+ * Result of completing a task execution.
+ */
+export interface CompletionResult {
+  /** The execution record */
+  execution: TaskExecution;
+  /** Instruction for Claude to mark task complete */
+  instructions: string;
+  /** Agent response */
+  result: AgentResponse;
+}
+
+/**
+ * Result of a failed task execution.
+ */
+export interface FailureResult {
+  /** The execution record */
+  execution: TaskExecution;
+  /** Instruction for Claude to release the task */
+  instructions: string;
+  /** Error that caused the failure */
+  error: Error;
+}
+
+/**
+ * A step in a multi-provider pipeline.
+ */
+export interface PipelineStep {
+  /** Unique step identifier within the pipeline */
+  name: string;
+  /** Task subject line (imperative form) */
+  subject: string;
+  /** Detailed task description */
+  description?: string;
+  /** AgentRouter role for execution */
+  role: AgentRole | string;
+  /** Names of steps this step depends on */
+  dependsOn?: string[];
+  /** Additional context for this step's agent */
+  context?: string;
+}
+
+/**
+ * Definition of a multi-step task pipeline.
+ */
+export interface PipelineDefinition {
+  /** Pipeline name for identification */
+  name: string;
+  /** Pipeline steps in declaration order */
+  steps: PipelineStep[];
+  /** Context passed to all steps */
+  globalContext?: string;
+}
+
+/**
+ * Execution state for a pipeline.
+ */
+export interface PipelineExecution {
+  /** Unique pipeline execution ID */
+  pipelineId: string;
+  /** Pipeline definition */
+  definition: PipelineDefinition;
+  /** Mapping from step name to Claude Code task ID */
+  taskIdMap: Map<string, string>;
+  /** Overall pipeline status */
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  /** Pipeline start timestamp */
+  startTime: number;
+  /** Set of completed step names */
+  completedSteps: Set<string>;
+  /** Results from completed steps */
+  results: Map<string, AgentResponse>;
+}
+
+/**
+ * Configuration for a background worker.
+ */
+export interface WorkerConfig {
+  /** Worker name for identification and ownership */
+  name: string;
+  /** Only claim tasks for these roles (empty = any) */
+  allowedRoles?: AgentRole[];
+  /** Maximum concurrent task executions (default: 1) */
+  maxConcurrent?: number;
+  /** Heartbeat interval in ms (default: 30000) */
+  heartbeatMs?: number;
+  /** Shutdown after idle for this duration in ms (default: 300000) */
+  idleTimeoutMs?: number;
+}
+
+/**
+ * Current state of a background worker.
+ */
+export interface WorkerState {
+  /** Worker name */
+  name: string;
+  /** Current worker status */
+  status: 'idle' | 'working' | 'shutdown';
+  /** Currently executing task ID (if working) */
+  currentTask?: string;
+  /** Count of successfully completed tasks */
+  completedCount: number;
+  /** Count of failed task attempts */
+  failedCount: number;
+  /** Last heartbeat timestamp */
+  lastHeartbeat: number;
+  /** Task IDs to exclude from claiming (failed attempts) */
+  excludeTaskIds?: string[];
+}
+
+/**
+ * Configuration for the tasks integration feature.
+ */
+export interface TasksConfig {
+  /** Enable task-aware tools */
+  enabled: boolean;
+  /** Default behavior settings */
+  defaults: {
+    /** Automatically mark tasks complete on success */
+    autoComplete: boolean;
+    /** Automatically release tasks on failure */
+    autoRelease: boolean;
+    /** Maximum execution time per task in ms */
+    timeoutMs: number;
+  };
+  /** Worker mode settings */
+  worker: {
+    /** Heartbeat interval in ms */
+    heartbeatMs: number;
+    /** Shutdown after idle for this duration in ms */
+    idleTimeoutMs: number;
+    /** Maximum retry attempts for failed tasks */
+    maxRetries: number;
+  };
+  /** Pipeline settings */
+  pipeline: {
+    /** Maximum concurrent pipeline steps */
+    maxParallel: number;
+    /** Execute independent steps in parallel by default */
+    defaultParallel: boolean;
+    /** Maximum context length before truncation */
+    maxContextLength: number;
+  };
+}
