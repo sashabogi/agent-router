@@ -13,6 +13,10 @@ AgentRouter is an MCP (Model Context Protocol) server that enables multi-agent o
 
 - **Multi-Provider Support** – Route tasks to OpenAI, Anthropic, Google Gemini, DeepSeek, Z.AI, and local Ollama models
 - **Specialized Agent Roles** – Dedicated agents for coding, code review, critique, design, and research
+- **Claude Code Tasks Integration** – Full integration with Claude Code's native task system (v2.1+) 🆕
+- **Multi-Provider Pipelines** – Create task DAGs where each stage uses a different provider 🆕
+- **Background Workers** – Spawn worker swarms to process task queues in parallel 🆕
+- **Pre-Built Skills** – Ready-to-use patterns for common multi-provider workflows 🆕
 - **Subscription Mode** – Use your Claude Code subscription as the orchestrator (no API key needed)
 - **Smart Routing** – Automatically route tasks to the best-suited agent based on role
 - **Cost Optimization** – Mix premium and budget models strategically
@@ -71,6 +75,66 @@ Restart Claude Code to activate.
 
 ---
 
+## 🔗 Claude Code Tasks Integration (v3.0)
+
+AgentRouter v3.0 fully integrates with Claude Code's native **Tasks** system (v2.1+). This enables:
+
+### Task-Aware Tools
+
+| Tool | Description |
+|------|-------------|
+| `execute_task` | Execute a Claude Code task with AgentRouter routing |
+| `create_routed_task` | Create a task pre-configured for a specific role |
+| `execute_pipeline` | Create multi-step workflows with dependencies |
+| `claim_next_task` | Worker pattern: claim and process task queues |
+| `get_pipeline_status` | Monitor pipeline progress and results |
+
+### Multi-Provider Pipelines
+
+Create task workflows where each stage uses the optimal provider:
+
+```
+execute_pipeline({
+  name: "feature-build",
+  steps: [
+    { name: "research", subject: "Research patterns", role: "researcher" },    → Gemini 3 Pro
+    { name: "design", subject: "Design architecture", role: "designer", dependsOn: ["research"] },    → Claude Sonnet
+    { name: "implement", subject: "Implement feature", role: "coder", dependsOn: ["design"] },    → DeepSeek Reasoner
+    { name: "review", subject: "Review code", role: "reviewer", dependsOn: ["implement"] }    → OpenAI o3
+  ]
+})
+```
+
+### Pre-Built Skills
+
+Install with `agent-router install-skills`:
+
+| Skill | Description |
+|-------|-------------|
+| `/multi-provider-build` | Full feature development with 5-stage pipeline |
+| `/parallel-review` | Get code reviews from multiple providers simultaneously |
+| `/research-implement` | Research-first development pattern |
+| `/spawn-workers` | Create worker swarms for batch processing |
+
+### Example: Multi-Provider Feature Build
+
+```
+You: /multi-provider-build Add JWT authentication with refresh tokens
+
+AgentRouter creates pipeline:
+├── Research (Gemini 3 Pro) → Best practices survey
+├── Design (Claude Sonnet) → Architecture design  
+├── Implement (DeepSeek Reasoner) → Code implementation
+├── Review (OpenAI o3) → Bug detection
+└── Critique (GPT-5.2) → Security analysis
+
+Each step routes to its configured provider automatically.
+```
+
+📖 **[Full Tasks Integration Guide →](docs/tasks-integration.md)**
+
+---
+
 ## 📦 Supported Providers
 
 | Provider | Models | Access Mode | Cost |
@@ -99,10 +163,10 @@ AgentRouter supports these specialized roles:
 | Role | Purpose | Recommended Provider |
 |------|---------|---------------------|
 | **Orchestrator** | Coordinates all agents, routes tasks | Anthropic (subscription) |
-| **Coder** | Writes, refactors, implements code | Anthropic, OpenAI |
+| **Coder** | Writes, refactors, implements code | DeepSeek, Anthropic |
 | **Critic** | Challenges assumptions, finds flaws | DeepSeek Reasoner |
-| **Reviewer** | Code review for bugs, security, performance | Anthropic, OpenAI |
-| **Designer** | UI/UX feedback and design review | Google Gemini |
+| **Reviewer** | Code review for bugs, security, performance | OpenAI o3 |
+| **Designer** | UI/UX feedback and design review | Claude Sonnet |
 | **Researcher** | Fact-finding and research tasks | Google Gemini |
 
 ---
@@ -111,16 +175,23 @@ AgentRouter supports these specialized roles:
 
 Configuration is stored at `~/.config/agent-router/config.yaml`
 
-### Example Configuration
+### Example Configuration (v3.0)
 
 ```yaml
-# AgentRouter Configuration v2
-version: "2.0"
+# AgentRouter Configuration v3
+version: "3.0"
 
 defaults:
   temperature: 0.7
   max_tokens: 4096
   timeout_ms: 60000
+
+# NEW: Tasks integration settings
+tasks:
+  enabled: true
+  defaults:
+    autoComplete: true
+    timeoutMs: 300000
 
 providers:
   anthropic:
@@ -130,40 +201,45 @@ providers:
   openai:
     access_mode: api
     api_key: ${OPENAI_API_KEY}
-    base_url: https://api.openai.com/v1
     default_model: gpt-5.1
+    
+  google:
+    access_mode: api
+    api_key: ${GEMINI_API_KEY}
+    default_model: gemini-3-pro
     
   deepseek:
     access_mode: api
     api_key: ${DEEPSEEK_API_KEY}
-    base_url: https://api.deepseek.com
     default_model: deepseek-reasoner
 
 roles:
   orchestrator:
     provider: anthropic
     model: claude-sonnet-4-5-20250929
-    temperature: 0.3
     
   coder:
-    provider: anthropic
-    model: claude-sonnet-4-5-20250929
-    temperature: 0.2
+    provider: deepseek
+    model: deepseek-reasoner
     
   critic:
     provider: deepseek
     model: deepseek-reasoner
-    temperature: 0.3
     
   reviewer:
     provider: openai
-    model: gpt-5.1
-    temperature: 0.2
+    model: o3
+    
+  designer:
+    provider: anthropic
+    model: claude-sonnet-4-5-20250929
+    
+  researcher:
+    provider: google
+    model: gemini-3-pro
 ```
 
 ### Environment Variables
-
-API keys can be set as environment variables:
 
 ```bash
 export OPENAI_API_KEY="sk-..."
@@ -183,6 +259,9 @@ agent-router setup
 
 # Start the MCP server
 agent-router start
+
+# Install skills to Claude Code
+agent-router install-skills
 
 # Create default config file
 agent-router init
@@ -207,6 +286,8 @@ agent-router --version
 
 ## 🔄 How It Works
 
+### Basic Routing
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                       Claude Code                            │
@@ -216,7 +297,6 @@ agent-router --version
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     AgentRouter                              │
-│                   (Orchestrator)                             │
 │                                                              │
 │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐        │
 │  │  Coder  │  │  Critic │  │Reviewer │  │Designer │        │
@@ -225,57 +305,85 @@ agent-router --version
         │            │            │            │
         ▼            ▼            ▼            ▼
    ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐
-   │Anthropic│  │DeepSeek │  │ OpenAI  │  │ Gemini  │
-   │  API    │  │   API   │  │   API   │  │   API   │
+   │DeepSeek │  │DeepSeek │  │ OpenAI  │  │ Claude  │
    └─────────┘  └─────────┘  └─────────┘  └─────────┘
 ```
 
-1. You interact with Claude Code as usual
-2. AgentRouter intercepts requests and routes them to specialized agents
-3. Each agent uses the optimal provider/model for its role
-4. Results are synthesized and returned to Claude Code
+### With Tasks Integration (v3.0)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Claude Code v2.1+                         │
+│     ┌─────────────────────────────────────────────┐         │
+│     │  TaskCreate → TaskUpdate → TaskList          │         │
+│     │           Native Task State                  │         │
+│     └──────────────────┬──────────────────────────┘         │
+└────────────────────────┼────────────────────────────────────┘
+                         │ MCP Protocol
+                         ▼
+┌────────────────────────────────────────────────────────────┐
+│                    AgentRouter v3.0                         │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │           Task Integration Layer                      │  │
+│  │  execute_task | execute_pipeline | claim_next_task   │  │
+│  └──────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │              Router Engine + Providers               │  │
+│  └──────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## 💡 Usage Examples
 
-### Get a Code Review
+### Simple: Get a Code Review
 
 ```
 You: Can you have the reviewer check this function for issues?
 
-AgentRouter: Routing to reviewer (openai/gpt-5.1)...
+AgentRouter: Routing to reviewer (openai/o3)...
 
 Reviewer: I found 3 issues in your function:
 1. Line 15: Potential SQL injection vulnerability...
-2. Line 23: Missing null check could cause NPE...
-3. Line 31: O(n²) complexity could be reduced...
 ```
 
-### Challenge a Design Decision
+### Intermediate: Compare Multiple Providers
 
 ```
-You: Have the critic review my database schema design.
+You: Compare how different providers would approach this refactoring.
 
-AgentRouter: Routing to critic (deepseek/deepseek-reasoner)...
+AgentRouter: Running compare_agents with coder, reviewer, critic...
 
-Critic: I have concerns about this schema:
-1. The `users` table lacks proper indexing for the email lookup...
-2. Storing JSON in the `metadata` column will make querying difficult...
-3. Consider: Why not use a separate table for user preferences?
+Results from 3 providers:
+- DeepSeek Reasoner: Focus on algorithmic optimization...
+- OpenAI o3: Suggests architectural changes...
+- DeepSeek Reasoner: Questions the fundamental approach...
 ```
 
-### Research a Topic
+### Advanced: Multi-Provider Pipeline
 
 ```
-You: Can the researcher find best practices for WebSocket authentication?
+You: /multi-provider-build Add rate limiting with Redis
 
-AgentRouter: Routing to researcher (google/gemini-2.5-pro)...
+AgentRouter: Creating 5-step pipeline...
 
-Researcher: Based on current best practices:
-1. Use token-based authentication during the handshake...
-2. Implement connection-level heartbeats...
-3. Consider using Socket.IO's built-in authentication middleware...
+Step 1/5: Research (Gemini 3 Pro)
+  └── Surveyed rate limiting patterns: token bucket, sliding window...
+
+Step 2/5: Design (Claude Sonnet)
+  └── Architecture: middleware + Redis sorted sets + configuration...
+
+Step 3/5: Implement (DeepSeek Reasoner)
+  └── Created rate-limiter.ts, redis-store.ts, middleware.ts...
+
+Step 4/5: Review (OpenAI o3)
+  └── Found edge case in concurrent request handling...
+
+Step 5/5: Critique (GPT-5.2)
+  └── Security OK. Suggested: add request logging for compliance...
+
+Pipeline complete! All files in ./src/rate-limiting/
 ```
 
 ---
@@ -283,9 +391,9 @@ Researcher: Based on current best practices:
 ## 🔒 Security
 
 - **API keys are masked** during setup wizard input
-- **Keys stored in shell profile** are not committed to version control
 - **Environment variable interpolation** keeps secrets out of config files
 - **Local Ollama option** for air-gapped/private environments
+- **Task isolation** – each pipeline execution is scoped
 
 ---
 
@@ -304,10 +412,6 @@ npm test
 # Type checking
 npm run typecheck
 
-# Linting
-npm run lint
-npm run lint:fix
-
 # Development mode (watch)
 npm run dev
 ```
@@ -322,9 +426,11 @@ agent-router/
 │   ├── mcp/              # MCP protocol implementation
 │   ├── providers/        # Provider integrations
 │   ├── router/           # Request routing logic
+│   ├── tasks/            # Task integration layer (v3.0)
 │   ├── translation/      # API translation layer
 │   └── types.ts          # TypeScript type definitions
 ├── docs/                 # Documentation
+├── skills/               # Pre-built Claude Code skills
 ├── tests/                # Test suites
 └── config/               # Default configurations
 ```
@@ -333,7 +439,9 @@ agent-router/
 
 ## 📚 Documentation
 
-- [Architecture Overview](docs/v2-architecture-update.md)
+- [Tasks Integration Guide](docs/tasks-integration.md) 🆕
+- [Full Design Document](docs/design/CLAUDE_CODE_TASKS_INTEGRATION.md) 🆕
+- [Architecture Overview](docs/architecture.md)
 - [Provider Setup Guide](docs/provider-setup.md)
 - [Configuration Reference](docs/configuration.md)
 - [API Reference](docs/api-reference.md)
@@ -342,7 +450,7 @@ agent-router/
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please read our contributing guidelines before submitting PRs.
+Contributions are welcome! Please read our [contributing guidelines](CONTRIBUTING.md) before submitting PRs.
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
