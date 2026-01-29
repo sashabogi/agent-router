@@ -68,12 +68,14 @@ interface OpenAITool {
 
 /**
  * OpenAI chat completion request body.
+ * Note: Newer models (GPT-4o, o1, etc.) use max_completion_tokens instead of max_tokens
  */
 interface OpenAIRequest {
   model: string;
   messages: OpenAIMessage[];
   temperature?: number | undefined;
   max_tokens?: number | undefined;
+  max_completion_tokens?: number | undefined;
   tools?: OpenAITool[] | undefined;
   stream?: boolean | undefined;
 }
@@ -286,19 +288,92 @@ export class OpenAIProvider extends BaseProvider {
 
   /**
    * Translate AgentRouter request to OpenAI format.
+   *
+   * Note: Newer OpenAI models (gpt-4o, gpt-4-turbo, o1, etc.) require
+   * max_completion_tokens instead of max_tokens. We detect model type
+   * and use the appropriate parameter.
    */
   private translateRequest(request: CompletionRequest): OpenAIRequest {
     const messages = this.translateMessages(request.messages);
     const tools = request.tools ? this.translateTools(request.tools) : undefined;
 
-    return {
+    // Newer models require max_completion_tokens instead of max_tokens
+    const usesNewTokenParam = this.modelRequiresMaxCompletionTokens(request.model);
+
+    // Debug logging
+    console.log(`[OpenAI] Model: ${request.model}, usesNewTokenParam: ${usesNewTokenParam}, max_tokens: ${request.max_tokens}`);
+
+    const result: OpenAIRequest = {
       model: request.model,
       messages,
       temperature: request.temperature,
-      max_tokens: request.max_tokens,
       tools: tools && tools.length > 0 ? tools : undefined,
       stream: request.stream,
     };
+
+    // Add the appropriate token limit parameter
+    if (request.max_tokens !== undefined) {
+      if (usesNewTokenParam) {
+        result.max_completion_tokens = request.max_tokens;
+        console.log(`[OpenAI] Using max_completion_tokens: ${request.max_tokens}`);
+      } else {
+        result.max_tokens = request.max_tokens;
+        console.log(`[OpenAI] Using max_tokens: ${request.max_tokens}`);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Check if we're using the actual OpenAI API (not a compatible third-party API).
+   * Third-party OpenAI-compatible APIs (Z.AI, DeepSeek, local LLMs, etc.) typically
+   * use the standard max_tokens parameter, not max_completion_tokens.
+   */
+  private isActualOpenAIAPI(): boolean {
+    const baseUrl = this.getBaseUrl(OpenAIProvider.DEFAULT_BASE_URL);
+    // Check if the base URL is OpenAI's official API
+    return baseUrl.startsWith('https://api.openai.com');
+  }
+
+  /**
+   * Check if a model requires max_completion_tokens instead of max_tokens.
+   * Newer OpenAI models (gpt-4o, gpt-4-turbo, gpt-5.x, o1, o3, etc.) use the new parameter.
+   *
+   * IMPORTANT: This only applies to the actual OpenAI API. Third-party OpenAI-compatible
+   * APIs (Z.AI, DeepSeek, Ollama, etc.) use the standard max_tokens parameter.
+   *
+   * As of late 2024, most new OpenAI models require max_completion_tokens.
+   * We default to using max_completion_tokens for any model that:
+   * - Contains 'gpt-4o', 'gpt-4-turbo', 'gpt-5', 'o1', 'o3', or 'chatgpt'
+   * - OR is NOT a legacy model (gpt-3.5, gpt-4-0314, gpt-4-0613)
+   */
+  private modelRequiresMaxCompletionTokens(model: string): boolean {
+    // If we're not talking to the actual OpenAI API, always use max_tokens
+    // Third-party OpenAI-compatible APIs (Z.AI, DeepSeek, local LLMs, etc.)
+    // typically use the standard max_tokens parameter
+    if (!this.isActualOpenAIAPI()) {
+      return false;
+    }
+
+    const lowerModel = model.toLowerCase();
+
+    // Legacy models that use max_tokens (the old parameter)
+    const legacyModels = [
+      'gpt-3.5',
+      'gpt-4-0314',
+      'gpt-4-0613',
+      'gpt-4-32k',
+    ];
+
+    // If it's a known legacy model, use old parameter
+    if (legacyModels.some(m => lowerModel.includes(m))) {
+      return false;
+    }
+
+    // For all other models (gpt-4o, gpt-4-turbo, gpt-5.x, o1, o3, etc.), use new parameter
+    // This is safer as OpenAI is moving toward max_completion_tokens
+    return true;
   }
 
   /**

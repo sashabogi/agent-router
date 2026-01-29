@@ -68,8 +68,8 @@ export async function createServer(): Promise<McpServer> {
   providers.registerFactory("openai", (providerConfig) => new OpenAIProvider(providerConfig));
   providers.registerFactory("google", (providerConfig) => new GeminiProvider(providerConfig));
   providers.registerFactory("ollama", (providerConfig) => new OllamaProvider(providerConfig));
-  // zai uses Anthropic-compatible API
-  providers.registerFactory("zai", (providerConfig) => new AnthropicProvider(providerConfig));
+  // zai (GLM) uses OpenAI-compatible API
+  providers.registerFactory("zai", (providerConfig) => new OpenAIProvider(providerConfig));
 
   logger.debug("Provider factories registered", {
     providers: providers.listProviders(),
