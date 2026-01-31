@@ -306,6 +306,71 @@ export async function testZaiConnection(
 export const testZhipuConnection = testZaiConnection;
 
 /**
+ * Test Kimi Code API connection
+ * Uses OpenAI-compatible format with Kimi's coding-specific endpoint
+ * Requires User-Agent header identifying as a coding agent
+ */
+export async function testKimiConnection(
+  apiKey: string,
+  baseUrl: string = "https://api.kimi.com/coding/v1"
+): Promise<ConnectionTestResult> {
+  const startTime = Date.now();
+
+  try {
+    // Kimi Code uses OpenAI-compatible API, test with a minimal completion
+    // Requires User-Agent header to identify as a coding agent
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "User-Agent": "claude-code/1.0",
+      },
+      body: JSON.stringify({
+        model: "kimi-for-coding",
+        messages: [{ role: "user", content: "Hi" }],
+        max_tokens: 1,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    const latencyMs = Date.now() - startTime;
+
+    if (response.ok) {
+      return { success: true, latencyMs };
+    }
+
+    await response.text(); // Consume body
+    let errorMessage = `HTTP ${response.status}`;
+
+    if (response.status === 401) {
+      errorMessage = "Invalid API key - get your sk-kimi-xxx key from kimi.com membership page";
+    } else if (response.status === 429) {
+      errorMessage = "Rate limited - quota exceeded";
+    } else if (response.status >= 500) {
+      errorMessage = "Kimi server error - try again later";
+    }
+
+    return { success: false, latencyMs, error: errorMessage };
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+    let errorMessage = "Unknown error";
+
+    if (error instanceof Error) {
+      if (error.name === "AbortError" || error.message.includes("timeout")) {
+        errorMessage = "Connection timeout - server not responding";
+      } else if (error.message.includes("ECONNREFUSED")) {
+        errorMessage = "Connection refused - check Kimi service status";
+      } else {
+        errorMessage = error.message;
+      }
+    }
+
+    return { success: false, latencyMs, error: errorMessage };
+  }
+}
+
+/**
  * Ollama model info
  */
 interface OllamaModelInfo {

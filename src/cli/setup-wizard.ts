@@ -24,6 +24,7 @@ import {
   testGeminiConnection,
   testDeepSeekConnection,
   testZaiConnection,
+  testKimiConnection,
   testOllamaConnection,
   testAnthropicConnection,
   testConnectionWithSpinner,
@@ -67,6 +68,7 @@ const PROVIDER_ENV_VARS: Record<string, string> = {
   google: "GEMINI_API_KEY",
   deepseek: "DEEPSEEK_API_KEY",
   zai: "ZAI_API_KEY",
+  kimi: "KIMI_API_KEY",
   ollama: "",
 };
 
@@ -115,6 +117,12 @@ const AVAILABLE_PROVIDERS: ProviderOption[] = [
     label: "Z.AI (GLM)",
     hint: "GLM-4.7 - Strong agentic coding, very affordable",
     supportsSubscription: false, // Requires API key when called from Claude Code
+  },
+  {
+    value: "kimi",
+    label: "Kimi Code",
+    hint: "Kimi for Coding - 262K context, excellent code generation",
+    supportsSubscription: false,
   },
   {
     value: "ollama",
@@ -183,6 +191,15 @@ const ZAI_MODELS: ModelOption[] = [
   { value: "glm-4.7", label: "GLM-4.7", hint: "Flagship - best for agentic coding" },
   { value: "glm-4.7-flashx", label: "GLM-4.7 FlashX", hint: "Fast and affordable" },
   { value: "glm-4.7-flash", label: "GLM-4.7 Flash", hint: "Free tier" },
+];
+
+/**
+ * Kimi Code models (January 2026)
+ * https://www.kimi.com/code/docs/en/more/third-party-agents.html
+ * Uses dedicated coding API with 262K context, 32K output
+ */
+const KIMI_MODELS: ModelOption[] = [
+  { value: "kimi-for-coding", label: "Kimi for Coding", hint: "262K context, 32K output - optimized for code" },
 ];
 
 /**
@@ -377,6 +394,8 @@ function getProviderModels(providerName: string): ModelOption[] {
       return DEEPSEEK_MODELS;
     case "zai":
       return ZAI_MODELS;
+    case "kimi":
+      return KIMI_MODELS;
     case "ollama":
       return OLLAMA_MODELS;
     default:
@@ -834,6 +853,72 @@ async function configureZai(): Promise<ProviderConfig | null> {
         api_key: "${" + envVarName + "}",
         base_url: "https://api.z.ai/api/paas/v4",
         default_model: "glm-4.7-flash",
+      };
+    }
+  }
+}
+
+/**
+ * Configure Kimi Code provider (API only)
+ */
+async function configureKimi(): Promise<ProviderConfig | null> {
+  p.log.step(color.bold("Kimi Code Configuration"));
+
+  p.note(
+    "Kimi for Coding - optimized for code generation tasks.\n" +
+      color.bold("262K context window, 32K max output") + "\n\n" +
+      "Get your API key (starts with sk-kimi-) from:\n" +
+      color.cyan("https://www.kimi.com/code") + " → Membership page",
+    "Kimi Code Setup"
+  );
+
+  while (true) {
+    const apiKey = await p.password({
+      message: "Enter your Kimi API key (sk-kimi-xxx):",
+      validate: (v) => validateApiKey(v, "kimi"),
+    });
+    if (p.isCancel(apiKey)) return null;
+
+    const result = await testConnectionWithSpinner("Kimi Code", () =>
+      testKimiConnection(apiKey)
+    );
+
+    if (result.success) {
+      const defaultModel = await p.select({
+        message: "Select default Kimi model:",
+        options: KIMI_MODELS,
+      });
+      if (p.isCancel(defaultModel)) return null;
+
+      const envVarName = PROVIDER_ENV_VARS["kimi"]!;
+      configuredEnvVars.set(envVarName, apiKey);
+
+      return {
+        access_mode: "api",
+        api_key: "${" + envVarName + "}",
+        base_url: "https://api.kimi.com/coding/v1",
+        default_model: defaultModel as string,
+      };
+    }
+
+    const action = await p.select({
+      message: "Connection test failed. What would you like to do?",
+      options: [
+        { value: "retry", label: "Re-enter API key" },
+        { value: "skip", label: "Skip this provider" },
+        { value: "add", label: "Add anyway" },
+      ],
+    });
+
+    if (p.isCancel(action) || action === "skip") return null;
+    if (action === "add") {
+      const envVarName = PROVIDER_ENV_VARS["kimi"]!;
+      configuredEnvVars.set(envVarName, apiKey);
+      return {
+        access_mode: "api",
+        api_key: "${" + envVarName + "}",
+        base_url: "https://api.kimi.com/coding/v1",
+        default_model: "kimi-for-coding",
       };
     }
   }
@@ -1362,6 +1447,8 @@ async function configureProviderWithAPIKey(providerType: string): Promise<Provid
       return configureDeepSeek();
     case "zai":
       return configureZaiAPI();
+    case "kimi":
+      return configureKimiAPI();
     case "ollama":
       return configureOllama();
     default:
@@ -1578,6 +1665,59 @@ async function configureZaiAPI(): Promise<ProviderConfig | null> {
   };
 }
 
+/**
+ * Configure Kimi Code with API key (no subscription option)
+ */
+async function configureKimiAPI(): Promise<ProviderConfig | null> {
+  p.note(
+    "Kimi for Coding - 262K context, 32K output.\n" +
+    "Get your API key (sk-kimi-xxx) from:\n" +
+    color.cyan("https://www.kimi.com/code") + " → Membership page",
+    "Kimi Code API Setup"
+  );
+
+  const apiKey = await p.password({
+    message: "Enter your Kimi API key (sk-kimi-xxx):",
+    validate: (value) => validateApiKey(value, "kimi"),
+  });
+
+  if (p.isCancel(apiKey)) return null;
+
+  const result = await testConnectionWithSpinner(
+    "Kimi Code",
+    () => testKimiConnection(apiKey as string)
+  );
+
+  if (!result.success) {
+    const continueAnyway = await p.confirm({
+      message: `Connection failed: ${result.error}. Continue anyway?`,
+      initialValue: false,
+    });
+    if (p.isCancel(continueAnyway) || !continueAnyway) return null;
+  }
+
+  const model = await p.select({
+    message: "Select default Kimi model:",
+    options: KIMI_MODELS.map((m) => ({
+      value: m.value,
+      label: m.label,
+      ...(m.hint ? { hint: m.hint } : {}),
+    })),
+  });
+
+  if (p.isCancel(model)) return null;
+
+  // Store API key for later shell profile export
+  configuredEnvVars.set("KIMI_API_KEY", apiKey as string);
+
+  return {
+    access_mode: "api",
+    api_key: `\${KIMI_API_KEY}`,
+    base_url: "https://api.kimi.com/coding/v1",
+    default_model: model as string,
+  };
+}
+
 
 // ============================================================================
 // Provider Management Functions (for CLI subcommands)
@@ -1639,6 +1779,9 @@ export async function addProvider(providerName?: string): Promise<void> {
       break;
     case "zai":
       config = await configureZai();
+      break;
+    case "kimi":
+      config = await configureKimi();
       break;
     case "ollama":
       config = await configureOllama();

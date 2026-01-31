@@ -233,7 +233,7 @@ export interface Tool {
 /**
  * Supported LLM provider types.
  */
-export type ProviderType = 'anthropic' | 'openai' | 'google' | 'deepseek' | 'zai' | 'ollama' | 'openrouter';
+export type ProviderType = 'anthropic' | 'openai' | 'google' | 'deepseek' | 'zai' | 'kimi' | 'ollama' | 'openrouter';
 
 /**
  * Request to complete a conversation.

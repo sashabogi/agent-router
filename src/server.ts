@@ -16,6 +16,7 @@ import { ProviderManager } from "./providers/manager.js";
 import { OllamaProvider } from "./providers/ollama.js";
 import { OpenAIProvider } from "./providers/openai.js";
 import { ZAIProvider } from "./providers/zai.js";
+import { KimiProvider } from "./providers/kimi.js";
 import { RouterEngine } from "./router/engine.js";
 import { TaskCoordinator, PipelineManager } from "./tasks/index.js";
 
@@ -71,6 +72,8 @@ export async function createServer(): Promise<McpServer> {
   providers.registerFactory("ollama", (providerConfig) => new OllamaProvider(providerConfig));
   // zai (GLM) uses dedicated ZAI provider (OpenAI-compatible API with correct name)
   providers.registerFactory("zai", (providerConfig) => new ZAIProvider(providerConfig));
+  // kimi (Moonshot AI) uses dedicated Kimi provider (OpenAI-compatible API with correct name)
+  providers.registerFactory("kimi", (providerConfig) => new KimiProvider(providerConfig));
 
   logger.debug("Provider factories registered", {
     providers: providers.listProviders(),
