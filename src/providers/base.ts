@@ -70,8 +70,8 @@ export abstract class BaseProvider implements Provider {
   /** Provider configuration */
   protected readonly config: ProviderConfig;
 
-  /** Default timeout in milliseconds */
-  protected readonly defaultTimeoutMs: number = 60000;
+  /** Default timeout in milliseconds (3 minutes for complex LLM operations) */
+  protected readonly defaultTimeoutMs: number = 180000;
 
   /**
    * Create a new provider instance.

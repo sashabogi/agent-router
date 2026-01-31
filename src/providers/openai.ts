@@ -143,7 +143,7 @@ interface OpenAIStreamChunk {
  * completion requests.
  */
 export class OpenAIProvider extends BaseProvider {
-  public readonly name = 'openai';
+  public readonly name: string = 'openai';
 
   private static readonly DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
@@ -178,7 +178,7 @@ export class OpenAIProvider extends BaseProvider {
       url,
       headers: this.buildHeaders(),
       body: openAIRequest,
-      timeoutMs: this.defaultTimeoutMs,
+      timeoutMs: request.timeout_ms ?? this.defaultTimeoutMs,
     });
 
     return this.translateResponse(response);
@@ -196,7 +196,7 @@ export class OpenAIProvider extends BaseProvider {
       url,
       headers: this.buildHeaders(),
       body: openAIRequest,
-      timeoutMs: this.defaultTimeoutMs,
+      timeoutMs: request.timeout_ms ?? this.defaultTimeoutMs,
       stream: true,
     });
 

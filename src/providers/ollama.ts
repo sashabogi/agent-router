@@ -217,7 +217,7 @@ export class OllamaProvider extends BaseProvider {
         url,
         headers: this.buildHeaders(),
         body: ollamaRequest,
-        timeoutMs: this.defaultTimeoutMs,
+        timeoutMs: request.timeout_ms ?? this.defaultTimeoutMs,
       });
 
       return this.translateResponse(response);
@@ -242,7 +242,7 @@ export class OllamaProvider extends BaseProvider {
         url,
         headers: this.buildHeaders(),
         body: ollamaRequest,
-        timeoutMs: this.defaultTimeoutMs,
+        timeoutMs: request.timeout_ms ?? this.defaultTimeoutMs,
         stream: true,
       });
     } catch (error) {

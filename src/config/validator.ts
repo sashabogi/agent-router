@@ -159,6 +159,15 @@ const CONFIG_SCHEMA = {
           additionalProperties: { type: 'string' },
           description: 'Additional headers for API requests',
         },
+        access_mode: {
+          type: 'string',
+          enum: ['api', 'subscription'],
+          description: 'Access mode: "api" for pay-per-token or "subscription" for CLI tools',
+        },
+        default_model: {
+          type: 'string',
+          description: 'Default model for this provider',
+        },
       },
     },
   },

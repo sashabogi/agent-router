@@ -19,13 +19,13 @@ import type { AgentResponse } from "../../types.js";
 /**
  * Available agent roles
  */
-const AGENT_ROLES = ["coder", "critic", "designer", "researcher", "reviewer"] as const;
+const AGENT_ROLES = ["coder", "critic", "designer", "orchestrator", "researcher", "reviewer"] as const;
 
 /**
  * Tool description for invoke_agent
  */
 const TOOL_DESCRIPTION =
-  "Invoke a specialized AI agent for a specific task. Available roles: coder (code generation), critic (plan review, assumption challenging), designer (UI/UX feedback), researcher (fact-finding), reviewer (code review).";
+  "Invoke a specialized AI agent for a specific task. Available roles: coder (code generation), critic (plan review, assumption challenging), designer (UI/UX feedback), orchestrator (task synthesis, document improvement), researcher (fact-finding), reviewer (code review).";
 
 // ============================================================================
 // Input Schema

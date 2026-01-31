@@ -37,6 +37,7 @@
   "author": "Sasha Bogojevic",
   "license": "MIT",
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.25",
     "@clack/prompts": "^0.11.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "ajv": "^8.17.1",

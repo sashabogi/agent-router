@@ -216,7 +216,7 @@ export class GeminiProvider extends BaseProvider {
       url,
       headers: this.buildHeaders(),
       body: geminiRequest,
-      timeoutMs: this.defaultTimeoutMs,
+      timeoutMs: request.timeout_ms ?? this.defaultTimeoutMs,
     });
 
     return this.translateResponse(response, request.model);
@@ -238,7 +238,7 @@ export class GeminiProvider extends BaseProvider {
       url,
       headers: this.buildHeaders(),
       body: geminiRequest,
-      timeoutMs: this.defaultTimeoutMs,
+      timeoutMs: request.timeout_ms ?? this.defaultTimeoutMs,
       stream: true,
     });
 

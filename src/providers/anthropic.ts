@@ -3,9 +3,14 @@
  *
  * Provider adapter for the Anthropic Claude API.
  * Handles message formatting, streaming, and tool use for Claude models.
+ *
+ * Supports two access modes:
+ * - 'api': Direct HTTP calls to Anthropic API (requires API key)
+ * - 'subscription': Uses Claude Agent SDK (requires CLAUDE_CODE_OAUTH_TOKEN)
  */
 
 import { BaseProvider } from './base.js';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 import type {
   CompletionRequest,
@@ -218,10 +223,20 @@ export class AnthropicProvider extends BaseProvider {
   /**
    * Execute a completion request and return the full response.
    *
+   * Supports two modes:
+   * - API mode (access_mode: 'api'): Direct HTTP calls to Anthropic API
+   * - Subscription mode (access_mode: 'subscription'): Uses Claude Agent SDK
+   *
    * @param request - The completion request
    * @returns Promise resolving to the normalized completion response
    */
   public async complete(request: CompletionRequest): Promise<CompletionResponse> {
+    // Use subscription mode if configured (no API key, uses CLAUDE_CODE_OAUTH_TOKEN)
+    if (this.config.access_mode === 'subscription') {
+      return this.completeViaSubscription(request);
+    }
+
+    // Default: API mode with direct HTTP calls
     const url = `${this.getBaseUrl(this.DEFAULT_BASE_URL)}/v1/messages`;
     const anthropicRequest = this.translateRequest(request);
 
@@ -230,10 +245,88 @@ export class AnthropicProvider extends BaseProvider {
       url,
       headers: this.buildHeaders(),
       body: anthropicRequest,
-      timeoutMs: this.defaultTimeoutMs,
+      timeoutMs: request.timeout_ms ?? this.defaultTimeoutMs,
     });
 
     return this.translateResponse(response);
+  }
+
+  /**
+   * Execute a completion using Claude Agent SDK (subscription mode).
+   * Uses CLAUDE_CODE_OAUTH_TOKEN for authentication.
+   *
+   * @param request - The completion request
+   * @returns Promise resolving to the normalized completion response
+   */
+  private async completeViaSubscription(request: CompletionRequest): Promise<CompletionResponse> {
+    // Build prompt from messages
+    const prompt = this.buildPromptFromMessages(request.messages);
+
+    // Use the Claude Agent SDK's query function
+    const q = query({
+      prompt,
+      options: {
+        model: request.model,
+        // Pass environment to subprocess (includes CLAUDE_CODE_OAUTH_TOKEN)
+        env: { ...process.env },
+      },
+    });
+
+    // Collect all text content from the response
+    let responseText = '';
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    for await (const message of q) {
+      // Handle different message types from the SDK
+      if (message.type === 'assistant') {
+        // SDKAssistantMessage contains BetaMessage with content and usage
+        const betaMessage = message.message;
+
+        // Extract text from content blocks
+        for (const block of betaMessage.content) {
+          if (block.type === 'text') {
+            responseText += block.text;
+          }
+        }
+
+        // Extract usage from BetaMessage
+        if (betaMessage.usage) {
+          inputTokens = betaMessage.usage.input_tokens || 0;
+          outputTokens = betaMessage.usage.output_tokens || 0;
+        }
+      }
+    }
+
+    // Return normalized response
+    return {
+      id: `sub_${Date.now()}`,
+      content: [{ type: 'text', text: responseText }],
+      model: request.model,
+      stop_reason: 'end_turn',
+      usage: {
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+      },
+    };
+  }
+
+  /**
+   * Build a single prompt string from messages array.
+   * Used for subscription mode where SDK expects a simple prompt.
+   *
+   * @param messages - Array of messages
+   * @returns Combined prompt string
+   */
+  private buildPromptFromMessages(messages: Message[]): string {
+    return messages
+      .map((msg) => {
+        const content = typeof msg.content === 'string'
+          ? msg.content
+          : msg.content.map(b => b.type === 'text' ? b.text : '').join('');
+        return `${msg.role}: ${content}`;
+      })
+      .join('\n\n');
   }
 
   /**
@@ -253,7 +346,7 @@ export class AnthropicProvider extends BaseProvider {
       url,
       headers: this.buildHeaders(),
       body: anthropicRequest,
-      timeoutMs: this.defaultTimeoutMs,
+      timeoutMs: request.timeout_ms ?? this.defaultTimeoutMs,
       stream: true,
     });
 
@@ -271,8 +364,16 @@ export class AnthropicProvider extends BaseProvider {
    * @throws ProviderError if the health check fails
    */
   public async healthCheck(): Promise<void> {
-    // Make a minimal request to verify credentials
-    // We use a simple message with minimal tokens
+    // For subscription mode, we can't easily verify without spawning SDK
+    // Just check if the OAuth token exists
+    if (this.config.access_mode === 'subscription') {
+      if (!process.env['CLAUDE_CODE_OAUTH_TOKEN']) {
+        throw new Error('Subscription mode requires CLAUDE_CODE_OAUTH_TOKEN environment variable');
+      }
+      return; // Token exists, assume healthy
+    }
+
+    // API mode: Make a minimal request to verify credentials
     const request: CompletionRequest = {
       model: 'claude-3-haiku-20240307',
       messages: [{ role: 'user', content: 'ping' }],

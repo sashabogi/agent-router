@@ -167,6 +167,7 @@ export class RouterEngine {
         messages,
         temperature: agentConfig.temperature,
         max_tokens: agentConfig.max_tokens,
+        timeout_ms: agentConfig.timeout_ms,
       };
 
       // Only add tools if provided (exactOptionalPropertyTypes compliance)
@@ -461,6 +462,7 @@ export class RouterEngine {
         messages,
         temperature: syntheticConfig.temperature,
         max_tokens: syntheticConfig.max_tokens,
+        timeout_ms: syntheticConfig.timeout_ms,
       };
 
       // Only add tools if provided (exactOptionalPropertyTypes compliance)

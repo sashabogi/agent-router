@@ -248,6 +248,8 @@ export interface CompletionRequest {
   temperature?: number;
   /** Maximum tokens to generate */
   max_tokens?: number;
+  /** Timeout in milliseconds for this request */
+  timeout_ms?: number;
   /** Tools available for the model to use */
   tools?: Tool[];
   /** Whether to stream the response */
